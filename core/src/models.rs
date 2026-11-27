@@ -194,6 +194,9 @@ pub struct HostCapabilities {
     /// 是否开放单文件核心热更新渠道设置。
     #[serde(default)]
     pub core_update: bool,
+    /// 当前前端/宿主发行版本。
+    #[serde(default)]
+    pub app_version: String,
     /// 当前核心版本。
     #[serde(default)]
     pub core_version: String,

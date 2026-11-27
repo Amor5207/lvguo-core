@@ -58,7 +58,7 @@
     return _gpuSupported;
   };
   LV.loggedIn = false;
-  LV.caps = { desktop: false, download: false, nativePlayer: false, gpuShaders: false, standalonePlayer: false, customTitlebar: false, coreUpdate: false, coreVersion: '', target: '' };
+  LV.caps = { desktop: false, download: false, nativePlayer: false, gpuShaders: false, standalonePlayer: false, customTitlebar: false, coreUpdate: false, coreVersion: '', appVersion: '', target: '' };
   LV.loadCaps = function () {
     return rawApi('/api/capabilities', {}).then(function (c) {
       if (c && typeof c === 'object') LV.caps = Object.assign({}, LV.caps, c);

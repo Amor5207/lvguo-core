@@ -247,6 +247,19 @@ fn log_pc_error(data_dir: &Path, msg: &str) {
     let _ = std::fs::write(data_dir.join("lvguo-pc.log"), format!("{msg}\n"));
 }
 
+/// 内嵌 WebView 拒绝新窗口时，交给系统默认浏览器处理外链与安装包下载。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn open_external_url(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(url).spawn();
+    }
+}
+
 /// 优先尝试用系统已有 Edge/Chrome 以独立配置目录 + `--app=` 应用窗口打开（不捆绑浏览器，
 /// 且避免复用已运行浏览器进程后立即退出导致宿主误判关闭）；否则回退至系统默认浏览器。
 fn open_ui_window(url: &str, data_dir: &Path, force_browser: bool) -> Option<Child> {
@@ -405,6 +418,9 @@ fn run_native_window(
                     let _ = open_proxy.send_event(PcEvent::OpenPlayer { url: req_url });
                     return NewWindowResponse::Deny;
                 }
+            }
+            if req_url.starts_with("https://") || req_url.starts_with("http://") {
+                open_external_url(&req_url);
             }
             NewWindowResponse::Deny
         })
@@ -588,7 +604,8 @@ fn main() {
         "gpuShaders": true,
         "standalonePlayer": use_native_win,
         "customTitlebar": use_native_win,
-        "coreUpdate": true
+        "coreUpdate": true,
+        "appVersion": env!("CARGO_PKG_VERSION")
     })
     .to_string();
 

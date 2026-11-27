@@ -1829,7 +1829,7 @@
     title('设置');
     var GROUPS = [['acct', '账号', 'user'], ['play', '播放', 'play2']];
     if (LV.caps.download) GROUPS.push(['dl', '下载', 'download']);
-    if (LV.caps.coreUpdate) GROUPS.push(['core', '更新', 'refresh']);
+    if (LV.caps.desktop && LV.caps.coreUpdate) GROUPS.push(['core', '更新', 'refresh']);
     GROUPS.push(['dm', '弹幕', 'danmaku'], ['look', '外观', 'auto'], ['keys', '快捷键', 'sliders'], ['about', '关于', 'film']);
     function row(t, s, right) { return '<div class="srow"><div class="sl"><b>' + t + '</b>' + (s ? '<small>' + s + '</small>' : '') + '</div>' + (right || '') + '</div>'; }
     function sw(k, t, s) { return row(t, s, '<button class="sw' + (LV.get(k) ? ' on' : '') + '" data-sw="' + k + '" role="switch" aria-checked="' + !!LV.get(k) + '" aria-label="' + t + '"></button>'); }
@@ -1850,7 +1850,7 @@
           (dlUrl ? '<a class="btn primary" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载新版</a>' : '') + '</div>');
       } else {
         var appSub = !appUpdate ? ''
-          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.1'));
+          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.2'));
         appHtml = row('软件更新', appSub, '<button class="btn" data-appcheck>检查更新</button>');
       }
       if (!coreStatus) return channelHtml + appHtml + row('Core 更新', '', '');
@@ -1910,7 +1910,7 @@
     function fill(r) { r.style.setProperty('--p', (r.value - r.min) / (r.max - r.min) * 100 + '%'); }
     $$('[data-rg]', root).forEach(fill); placeSeg(root);
     function redraw(k) { var c = $('[data-g="' + k + '"]', root); if (c) { c.innerHTML = groupBody(k); placeSeg(c); } }
-    if (LV.caps.coreUpdate) api('/api/core/update').then(function (s) { coreStatus = s; redraw('core'); }).catch(function () {});
+    if (LV.caps.desktop && LV.caps.coreUpdate) api('/api/core/update').then(function (s) { coreStatus = s; redraw('core'); }).catch(function () {});
     if (LV.caps.download) api('/api/download/settings').then(function (s) { dlSettings = s; redraw('dl'); }).catch(function () {});
     root.addEventListener('click', function (e) {
       var flt = e.target.closest('[data-sflt]');
@@ -1925,7 +1925,7 @@
       }
       else if (ac) {
         ac.disabled = true;
-        api('/api/app/update/check').then(function (r) {
+        api('/api/app/update/check', { query: { version: LV.caps.appVersion || '' } }).then(function (r) {
           appUpdate = r; redraw('core');
           LV.toast(r.disabled ? '当前已关闭自动更新' : (r.hasUpdate ? '发现新版客户端 ' + r.latestVersion : '当前客户端已是最新版本'));
         }).catch(function (er) { LV.toast(er.message); }).then(function () { ac.disabled = false; });
