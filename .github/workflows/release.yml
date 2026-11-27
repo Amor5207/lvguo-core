@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: '可选：指定 Release Tag（客户端 v3.0.0 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
+        description: '可选：指定 Release Tag（客户端 v3.0.1 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
         required: false
         default: ''
 
@@ -43,8 +43,8 @@ jobs:
             EFFECTIVE_TAG="${{ inputs.release_tag }}"
           fi
 
-          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.0")')"
-          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3000")')"
+          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.1")')"
+          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3001")')"
           CORE_VER="$(python3 -c 'import re,pathlib; m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", pathlib.Path("core/Cargo.toml").read_text()); print(m.group(1) if m else "1.0.0")')"
 
           KIND="all"
@@ -157,7 +157,7 @@ jobs:
             lvguo-pc [--listen 127.0.0.1:0] [--data-dir PATH] [--browser] [--headless]
 
           三、核心热更新说明
-            3.0.0 采用 Core（1.0.0）与 UI 彻底解耦架构。后续仅通过设置内「Core 更新」单文件热替换即可升级协议与解密核心；
+            自 3.0.0 起采用 Core（1.0.0）与 UI 彻底解耦架构。后续仅通过设置内「Core 更新」单文件热替换即可升级协议与解密核心；
             如本地安装有 mpv，可解锁独立硬解播放与 GPU 着色器增强。
           EOF
             tar -czf "out/pc/LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.tar.gz" -C out/pc "LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.deb" "使用说明.txt"
@@ -275,7 +275,7 @@ jobs:
             2. 安装向导会自动识别 64 位（x64）或 32 位（x86）系统并写入对应核心组件。
 
           二、功能提示
-            - 3.0.0 采用 Core（1.0.0）与 UI 彻底解耦架构，后续协议修复只需在「设置 -> Core 更新」单文件热替换。
+            - 自 3.0.0 起采用 Core（1.0.0）与 UI 彻底解耦架构，后续协议修复只需在「设置 -> Core 更新」单文件热替换。
             - 若系统安装有 mpv，可在设置内切换外部播放器解锁独立硬解窗与着色器增强。
           "@ | Set-Content -Path "out/pc-dist/使用说明.txt" -Encoding UTF8
             Compress-Archive -Path "out/pc-dist/LvguoPC-Setup-$env:VER-win.exe", "out/pc-dist/使用说明.txt" -DestinationPath "out/pc-dist/LvguoPC-$env:VER-win.zip" -Force
@@ -497,7 +497,7 @@ jobs:
             打开无需邀请码或强制登录，支持遥控器方向键导航及同局域网手机扫码遥控（默认端口 8765）。
 
           三、后续升级提示
-            3.0.0 已彻底切换为 lvguo-core 共享核心架构，建议长期升级至本版本；
+            自 3.0.0 起已彻底切换为 lvguo-core 共享核心架构；
             后续可在设置页分别检查「软件更新」与「Core 单文件热更新」。
           EOF
             (cd out/apk && zip -9 -q "LvguoTV-${VER}.zip" "LvguoTV-${VER}.apk" "使用说明.txt")
@@ -600,9 +600,12 @@ jobs:
             test -f "release-assets/lvguo-web-${VER}-windows-x86.zip"
 
             cat > release-notes.md <<EOF
-          ## 绿果 ${VER}（重大架构升级 · 强烈建议升级）
+          ## 绿果 ${VER}
 
-          本次 **${VER}** 为全新 **Core × 极薄宿主解耦架构** 正式版：全部协议解析、请求签名、流式解密与下载能力下沉至 \`lvguo-core\`，后续仅持续维护 \`lvguo-core\` 核心引擎（各端支持单文件热更新），旧版分支已停止维护，**强烈建议全部用户升级至本版本**。
+          ### 本次更新
+
+          - **独立播放页（Web / PC）**：访问 \`/play\` 时直接加载播放器，不再先加载主站导航与首页数据；播放失败时提供明确的错误提示与返回首页入口。
+          - **设置页布局优化**：修复「播放设置」下方大面积留白，各设置分区按自适应多栏瀑布流均衡排布。
 
           > 为避免浏览器拦截裸安装包，全部交付产物均已打包为 \`.zip\` 或 \`.tar.gz\` 压缩包，内部均附带 \`使用说明.txt\`，解压后按说明安装或运行即可。
 

@@ -180,10 +180,10 @@ async fn serve_conn(mut stream: TcpStream, core: Arc<AppCore>) -> Result<(), Str
     }
 
     // 静态页面与 SPA 路由托管
-    let asset_path = if req.path == "/" {
-        "/pc/index.html"
-    } else {
-        req.path.as_str()
+    let asset_path = match req.path.as_str() {
+        "/" => "/pc/index.html",
+        "/play" | "/pc/play" => "/pc/play.html",
+        p => p,
     };
     if let Some((mime, bytes)) = core.load_static_asset(asset_path) {
         write_bytes(&mut stream, 200, mime, &bytes, req.method == "HEAD").await;

@@ -1,6 +1,6 @@
 [package]
 name = "lvguo-host-common"
-version = "3.0.0"
+version = "3.0.1"
 edition = "2021"
 description = "绿果桌面与网页宿主共享基础库：单文件 Core 动态加载器、防崩回滚与内嵌 Web UI 资产表"
 license = "GPL-3.0"

@@ -291,6 +291,9 @@ mark{background:none;color:var(--primary-text);font-weight:600}
 #player.out{animation:pOut .3s var(--ease) both}
 @keyframes pOut{to{opacity:0}}
 #player.idle{cursor:none}
+.play-fail{position:absolute;inset:0;z-index:3;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:40px;text-align:center;color:rgba(255,255,255,.62);font-size:14.5px}
+.play-fail b{font-size:17px;font-weight:650;color:#fff}
+.play-fail .btn{margin-top:18px}
 .amb{position:absolute;inset:0;pointer-events:none;overflow:hidden}
 .amb i,.amb canvas{position:absolute;left:-15%;top:-15%;width:130%;height:130%;background-size:cover;background-position:center;filter:blur(90px) saturate(1.9);transition:opacity 1.6s var(--ease)}
 .amb i{opacity:.6}
@@ -647,15 +650,13 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
 .setp-v2{max-width:1360px;margin:0 auto;padding:0 var(--gut) 96px}
 .set-top{padding:20px 0 18px}
 .set-sub{margin:0;font-size:13.5px;color:var(--text-3)}
-.set-list{display:grid;grid-template-columns:1fr;gap:20px}
-.set-bento-col{display:flex;flex-direction:column;gap:20px;min-width:0}
+.set-list{column-count:1;column-gap:24px}
+.set-bento-col{display:contents}
 @media (min-width:1060px){
-  .set-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:20px 24px;align-items:start}
-  .set-list .sgrp.wide{grid-column:1 / -1}
-  .set-list.single{grid-template-columns:1fr;max-width:860px}
-  .set-list.single .set-bento-col{display:contents}
+  .set-list{column-count:2}
 }
-.sgrp{margin-top:0;scroll-margin-top:80px;display:flex;flex-direction:column}
+.sgrp{margin-top:0;margin-bottom:20px;break-inside:avoid;page-break-inside:avoid;scroll-margin-top:80px;display:flex;flex-direction:column}
+.sgrp.wide{column-span:all}
 .sgrp[hidden]{display:none}
 .sgrp h2{display:flex;align-items:center;gap:8px;margin:0 0 10px 4px;font-size:14px;font-weight:650;color:var(--text-2)}
 .sgrp-ico{display:grid;place-items:center;width:24px;height:24px;border-radius:7px;background:var(--primary-soft);color:var(--primary-text);font-size:13.5px}
@@ -843,7 +844,7 @@ input[type=range]::-webkit-slider-thumb:hover{transform:scale(1.15)}
   /* 设置：目录隐藏，长控件换到下一行 */
   .setp{padding-top:calc(var(--nav) + 18px);gap:0}
   .smain>h1{font-size:26px}
-  .sgrp{margin-top:24px}
+  .sgrp{margin-top:0}
   .scard .srow{flex-wrap:wrap;padding:12px 16px;gap:10px 14px;min-height:56px}
   .scard .srow+.srow::before{left:16px}
   .scard .srow .sl{flex:1 1 160px}

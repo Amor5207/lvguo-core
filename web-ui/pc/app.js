@@ -210,9 +210,9 @@
   window.addEventListener('resize', LV.debounce(function () { rowsReady(view); placeSeg(); setTab(curTab); }, 120));
 
   // ------------------------------------------------------------ 导航
-  var tabs = $('#tabs'), hlb = $('.hl', tabs), curTab = '';
+  var tabs = $('#tabs'), hlb = tabs ? $('.hl', tabs) : null, curTab = '';
   function setTab(name) {
-    curTab = name; var a = null;
+    curTab = name; if (!tabs || !hlb) return; var a = null;
     $$('a', tabs).forEach(function (x) { var on = x.dataset.tab === name; x.classList.toggle('on', on); if (on) a = x; });
     if (!a) return hlb.classList.remove('show');
     var first = !hlb.classList.contains('show');
@@ -223,7 +223,7 @@
   // 首页始终显示导航背景，其他页面在滚动后显示。
   var scT = 0;
   function onScroll() {
-    scT = 0; var y = window.scrollY, hero = $('.hero', view), heroH = hero ? hero.offsetHeight : 0;
+    scT = 0; if (!nav || !navbg || !view) return; var y = window.scrollY, hero = $('.hero', view), heroH = hero ? hero.offsetHeight : 0;
     var over = hasHero && y < heroH - nav.offsetHeight;
     nav.classList.toggle('over', over);
     nav.classList.toggle('solid', !over && y > 4); navbg.classList.toggle('on', curTab === 'home' || curTab === 'feed' || y > 4);
@@ -249,7 +249,8 @@
     }
   }
   function closeMenu() { var m = $('.menu'); if (m) m.remove(); }
-  $('#acct').onclick = function (e) {
+  var acctBtn = $('#acct');
+  if (acctBtn) acctBtn.onclick = function (e) {
     e.stopPropagation();
     if (!LV.loggedIn) return showLogin();
     logout();
@@ -261,6 +262,7 @@
     location.reload();
   }
   document.addEventListener('keydown', function (e) {
+    if (isStandalonePlay()) return;
     if ((e.key === '/' || (e.key === 'k' && (e.metaKey || e.ctrlKey))) && !/INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !PL) {
       e.preventDefault(); openSearch();
     }
@@ -1848,7 +1850,7 @@
           (dlUrl ? '<a class="btn primary" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载新版</a>' : '') + '</div>');
       } else {
         var appSub = !appUpdate ? ''
-          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.0'));
+          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.1'));
         appHtml = row('软件更新', appSub, '<button class="btn" data-appcheck>检查更新</button>');
       }
       if (!coreStatus) return channelHtml + appHtml + row('Core 更新', '', '');
@@ -2181,16 +2183,23 @@
     boot();
   }
 
+  function playFail(msg) {
+    title('播放');
+    var el = $('#player');
+    if (!el) return;
+    el.hidden = false; el.className = '';
+    el.innerHTML = '<div class="play-fail"><b>' + esc(msg || '加载失败') + '</b><span>可以返回首页重新选择剧集</span><a class="btn primary" href="/" target="_self">返回首页</a></div>';
+  }
   function openStandalonePlay() {
     if (PL) return;
     var qs = new URLSearchParams(location.search);
     var id = qs.get('id') || '', ep = +(qs.get('ep') || 0), pos = +(qs.get('pos') || 0);
-    if (!id) { title('播放'); mount(empty('film', '播放参数无效', '', '')); return; }
+    if (!id) { playFail('播放参数无效'); return; }
     mount('');
     api('/api/detail', { query: { id: id, lite: '1' }, ttl: TTL }).then(function (r) {
       if (PL) return;
       if (!r || !r.detail || !r.detail.episodes || !r.detail.episodes.length) {
-        mount(empty('film', '暂无可播放剧集', '', ''));
+        playFail('暂无可播放剧集');
         return;
       }
       var idx;
@@ -2203,7 +2212,7 @@
       }
       openWebPlayer(r.detail, idx, pos, true);
     }).catch(function (er) {
-      mount(failed(er && er.message));
+      playFail(er && er.message);
     });
   }
   function openPlayer(d, index, posMs, reuseHistory, feed) {
@@ -3451,6 +3460,17 @@
     }
     loadHotKeywords();
   }
+  async function bootStandalone() {
+    document.documentElement.setAttribute('data-standalone', '1');
+    document.body.dataset.route = 'play';
+    try {
+      await LV.loadCaps();
+      document.documentElement.setAttribute('data-host', LV.caps.desktop ? 'pc' : 'web');
+      document.documentElement.setAttribute('data-titlebar', LV.caps.customTitlebar ? '1' : '0');
+    } catch (e) {}
+    title('播放');
+    openStandalonePlay();
+  }
   window.history.scrollRestoration = 'manual';
-  boot();
+  if (isStandalonePlay()) bootStandalone(); else boot();
 })();
