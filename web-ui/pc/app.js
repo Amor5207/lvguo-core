@@ -1850,7 +1850,7 @@
           (dlUrl ? '<a class="btn primary" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载新版</a>' : '') + '</div>');
       } else {
         var appSub = !appUpdate ? ''
-          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.2'));
+          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.3'));
         appHtml = row('软件更新', appSub, '<button class="btn" data-appcheck>检查更新</button>');
       }
       if (!coreStatus) return channelHtml + appHtml + row('Core 更新', '', '');
@@ -2905,6 +2905,7 @@
       }
     };
     function selectEpisode(i) {
+      if (el.classList.contains('dock-on')) el.classList.remove('dock-on');
       var target = S.browseDetail || d, changedSeason = target.id !== d.id;
       if (changedSeason) {
         dropPre();dropNextSeason();
@@ -3254,10 +3255,10 @@
       var wb = e.target.closest('[data-win]'); if (wb) { e.stopPropagation(); return sendWinAction(wb.dataset.win); }
       var b = e.target.closest('[data-a]'); if (b) { e.stopPropagation(); return act(b.dataset.a); }
       if (e.target.closest('.dock,.pbot,.ptop,.pmenu,.upnext,.perr,.mid,.fd-nav')) { if (!e.target.closest('.pmenu')) closePm(); return; }
-      if (el.classList.contains('dock-on')) { el.classList.remove('dock-on'); return; }
+      if (el.classList.contains('dock-on')) return;
       if ($('.pmenu', el)) return closePm();
       // 触屏：点画面只呼出 / 收起控件（播放暂停用中间按钮），和手机视频 App 一致
-      if (TOUCH) { if (el.classList.contains('dock-on')) { el.classList.remove('dock-on'); if (!feed) LV.set('dock', false); return; } if (el.classList.contains('idle') || (v && v.paused)) showUI(); else { clearTimeout(S.idle); el.classList.add('idle'); } return; }
+      if (TOUCH) { if (el.classList.contains('dock-on')) return; if (el.classList.contains('idle') || (v && v.paused)) showUI(); else { clearTimeout(S.idle); el.classList.add('idle'); } return; }
       clearTimeout(S.ck); S.ck = setTimeout(function () { act('toggle'); }, 220);
     }, sig);
     // 触屏：画面上下滑切集/切剧，抽屉把手下滑收起
