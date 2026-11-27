@@ -1,0 +1,17 @@
+/target/
+**/target/
+out/
+dist/
+*.log
+*.apk
+*.aab
+*.keystore
+*.jks
+.DS_Store
+hosts/android-tv/.gradle/
+hosts/android-tv/build/
+hosts/android-tv/out/
+hosts/android-tv/app/build/
+hosts/android-tv/jniLibs/
+hosts/android-tv/third_party/hgtv_media3_dependencies/
+!hosts/android-tv/third_party/hgtv_media3_dependencies/artifacts.json

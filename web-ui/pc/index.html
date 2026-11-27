@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0d1110">
+<meta name="color-scheme" content="light dark">
+<title>绿果</title>
+<link rel="icon" type="image/png" href="/shared/favicon.png">
+<script>try{var m=JSON.parse(localStorage.getItem('lvguo.settings')||'{}').theme||'auto';var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light')}catch(e){}</script>
+<link rel="stylesheet" href="/shared/tokens.css">
+<link rel="stylesheet" href="/pc/app.css">
+</head>
+<body>
+<div id="navbg" aria-hidden="true"></div>
+<header id="nav">
+  <a class="brand" href="/" aria-label="绿果 首页"><img src="/shared/logo.png" alt=""><span>绿果</span></a>
+  <nav id="tabs" aria-label="主导航">
+    <i class="hl"></i>
+    <div class="nav-grp">浏览</div>
+    <a data-tab="home" href="/"><svg class="icon"><use href="#i-home"/></svg><span>首页</span></a>
+    <a data-tab="feed" href="/feed"><svg class="icon"><use href="#i-play2"/></svg><span>刷剧</span></a>
+    <a data-tab="rank" href="/rank"><svg class="icon"><use href="#i-chart"/></svg><span>榜单</span></a>
+    <a data-tab="category" href="/category"><svg class="icon"><use href="#i-grid"/></svg><span>分类</span></a>
+    <a data-tab="search" href="/search"><svg class="icon"><use href="#i-search"/></svg><span>搜索</span></a>
+    <div class="nav-grp">我的</div>
+    <a data-tab="fav" href="/mine/fav"><svg class="icon"><use href="#i-heart"/></svg><span>收藏</span></a>
+    <a data-tab="history" href="/mine/history"><svg class="icon"><use href="#i-clock"/></svg><span>历史</span></a>
+    <a data-tab="reserve" href="/mine/reserve"><svg class="icon"><use href="#i-bell"/></svg><span>预约</span></a>
+    <div class="nav-grp">其他</div>
+    <a data-tab="downloads" href="/downloads" hidden><svg class="icon"><use href="#i-download"/></svg><span>下载</span></a>
+    <a data-tab="settings" href="/settings"><svg class="icon"><use href="#i-gear"/></svg><span>设置</span></a>
+  </nav>
+  <button id="acct" class="sb-acct" type="button" aria-label="账号"></button>
+</header>
+<header id="topbar">
+  <div class="top-search-wrap">
+    <form id="topSearchForm" class="top-search" autocomplete="off">
+      <svg class="icon"><use href="#i-search"/></svg>
+      <input id="topSearchInput" type="search" placeholder="搜索剧名、演员或关键词..." spellcheck="false" aria-label="搜索剧名、演员或关键词">
+      <button id="topSearchClear" class="top-clr" type="button" hidden aria-label="清除"><svg class="icon"><use href="#i-close"/></svg></button>
+    </form>
+    <div id="topSuggest" class="top-suggest" hidden></div>
+  </div>
+  <div id="winCtrls" class="win-ctrls" hidden>
+    <button class="win-btn" type="button" data-win="minimize" title="最小化" aria-label="最小化"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14"/></svg></button>
+    <button class="win-btn" type="button" data-win="maximize" title="最大化 / 还原" aria-label="最大化"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="1.5"/></svg></button>
+    <button class="win-btn win-close" type="button" data-win="close" title="关闭" aria-label="关闭"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+  </div>
+</header>
+<main id="view"></main>
+<div id="pop"></div>
+<div id="player" hidden></div>
+<div id="auth"></div>
+<script src="/shared/compat.js"></script>
+<script src="/shared/icons.js"></script>
+<script src="/shared/core.js"></script>
+<script src="/shared/gpu_fx.js"></script>
+<script src="/pc/app.js"></script>
+</body>
+</html>

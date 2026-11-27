@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "core",
+    "hosts/common",
+    "hosts/web",
+    "hosts/pc",
+]
+resolver = "2"
+
+[profile.release]
+# 极致体积与运行时性能优化：全链路 LTO + 单单元编译 + 剥离符号
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

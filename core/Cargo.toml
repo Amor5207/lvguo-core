@@ -1,0 +1,35 @@
+[package]
+name = "lvguo-core"
+version = "1.0.0"
+edition = "2021"
+description = "绿果统一核心库：协议签名、流媒体解密、账号同步、多线程下载与单文件热更新"
+license = "GPL-3.0"
+
+[lib]
+name = "lvguo_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aes = "0.8"
+base64 = "0.22"
+cbc = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+ctr = "0.9"
+dirs = "5"
+flate2 = "1"
+futures-util = "0.3"
+hex = "0.4"
+md-5 = "0.10"
+once_cell = "1"
+rand = "0.8"
+regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream", "gzip"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "io-util", "net"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"

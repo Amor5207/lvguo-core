@@ -1,0 +1,674 @@
+name: 全端核心引擎与客户端构建
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*', 'core-v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: '可选：指定 Release Tag（客户端 v3.0.0 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: 单元测试、Clippy 与前端检查
+    runs-on: ubuntu-24.04
+    outputs:
+      kind: ${{ steps.ver.outputs.kind }}
+      tag: ${{ steps.ver.outputs.tag }}
+      version: ${{ steps.ver.outputs.version }}
+      core_version: ${{ steps.ver.outputs.core_version }}
+      version_code: ${{ steps.ver.outputs.version_code }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - id: ver
+        run: |
+          EFFECTIVE_TAG=""
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            EFFECTIVE_TAG="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.release_tag }}" ]]; then
+            EFFECTIVE_TAG="${{ inputs.release_tag }}"
+          fi
+
+          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.0")')"
+          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3000")')"
+          CORE_VER="$(python3 -c 'import re,pathlib; m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", pathlib.Path("core/Cargo.toml").read_text()); print(m.group(1) if m else "1.0.0")')"
+
+          KIND="all"
+          if [[ "${EFFECTIVE_TAG}" == core-v* ]]; then
+            KIND="core"
+            CORE_VER="${EFFECTIVE_TAG#core-v}"
+          elif [[ "${EFFECTIVE_TAG}" == v* ]]; then
+            KIND="ui"
+            VER="${EFFECTIVE_TAG#v}"
+          fi
+
+          {
+            echo "kind=${KIND}"
+            echo "tag=${EFFECTIVE_TAG}"
+            echo "version=${VER}"
+            echo "core_version=${CORE_VER}"
+            echo "version_code=${CODE}"
+          } >> "$GITHUB_OUTPUT"
+      - name: 验证前端语法
+        run: |
+          node -c web-ui/shared/compat.js
+          node -c web-ui/shared/core.js
+          node -c web-ui/shared/icons.js
+          node -c web-ui/shared/gpu_fx.js
+          node -c web-ui/pc/app.js
+      - name: 运行 Rust Clippy 零警告检查
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: 运行 Rust 单元测试
+        run: cargo test --workspace
+
+  build-linux:
+    name: Linux (${{ matrix.id }})
+    needs: test
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-x86_64
+            deb_arch: amd64
+            target: x86_64-unknown-linux-gnu
+            apt: ""
+            linker: gcc
+          - id: linux-x86
+            deb_arch: i386
+            target: i686-unknown-linux-gnu
+            apt: gcc-i686-linux-gnu libc6-dev-i386-cross
+            linker: i686-linux-gnu-gcc
+          - id: linux-aarch64
+            deb_arch: arm64
+            target: aarch64-unknown-linux-gnu
+            apt: gcc-aarch64-linux-gnu libc6-dev-arm64-cross
+            linker: aarch64-linux-gnu-gcc
+          - id: linux-armv7
+            deb_arch: armhf
+            target: armv7-unknown-linux-gnueabihf
+            apt: gcc-arm-linux-gnueabihf libc6-dev-armhf-cross
+            linker: arm-linux-gnueabihf-gcc
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: 安装交叉编译工具链
+        if: matrix.apt != ''
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ${{ matrix.apt }}
+      - name: 编译核心库与 PC/Web 宿主
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          LVGUO_CORE_VERSION: ${{ needs.test.outputs.kind == 'core' && needs.test.outputs.core_version || '' }}
+        run: |
+          TARGET_UPPER=$(echo "${{ matrix.target }}" | tr '[:lower:]-' '[:upper:]_')
+          TARGET_UNDERSCORE=$(echo "${{ matrix.target }}" | tr '-' '_')
+          export "CARGO_TARGET_${TARGET_UPPER}_LINKER=${{ matrix.linker }}"
+          export "CC_${TARGET_UNDERSCORE}=${{ matrix.linker }}"
+          if [[ "$KIND" == "core" ]]; then
+            cargo build -p lvguo-core --release --target ${{ matrix.target }}
+          else
+            cargo build --workspace --release --target ${{ matrix.target }}
+          fi
+      - name: 生成 Linux 客户端包与 Core 单文件
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          VER: ${{ needs.test.outputs.version }}
+        run: |
+          mkdir -p out/pc out/web out/core
+          if [[ "$KIND" != "core" ]]; then
+            chmod +x packaging/linux/build_deb.sh
+            ./packaging/linux/build_deb.sh \
+              --arch "${{ matrix.deb_arch }}" \
+              --bin "target/${{ matrix.target }}/release/lvguo-pc" \
+              --core "target/${{ matrix.target }}/release/liblvguo_core.so" \
+              --version "$VER" \
+              --out out/pc
+
+            cat > out/pc/使用说明.txt <<EOF
+          绿果PC ${VER}（Linux ${{ matrix.deb_arch }}）使用说明
+          ========================================
+
+          一、安装方式（Debian / Ubuntu 系列）
+            sudo dpkg -i LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.deb
+            sudo apt-get install -f -y
+
+          二、直接运行命令行参数
+            lvguo-pc [--listen 127.0.0.1:0] [--data-dir PATH] [--browser] [--headless]
+
+          三、核心热更新说明
+            3.0.0 采用 Core（1.0.0）与 UI 彻底解耦架构。后续仅通过设置内「Core 更新」单文件热替换即可升级协议与解密核心；
+            如本地安装有 mpv，可解锁独立硬解播放与 GPU 着色器增强。
+          EOF
+            tar -czf "out/pc/LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.tar.gz" -C out/pc "LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.deb" "使用说明.txt"
+
+            cp "target/${{ matrix.target }}/release/lvguo-web" "out/web/lvguo-web"
+            cp "target/${{ matrix.target }}/release/liblvguo_core.so" "out/web/liblvguo_core.so"
+            cat > out/web/使用说明.txt <<EOF
+          绿果 Web 服务端 ${VER}（Linux ${{ matrix.deb_arch }}）使用说明
+          ==============================================
+
+          一、前台运行
+            chmod +x lvguo-web
+            ./lvguo-web --listen 0.0.0.0:8780 --data-dir /var/lib/lvguo-web
+
+          二、注册系统后台服务（systemd）
+            sudo ./lvguo-web service install --listen 0.0.0.0:8780 --data-dir /var/lib/lvguo-web
+            sudo ./lvguo-web service status
+            sudo ./lvguo-web service uninstall
+
+          三、可用环境变量
+            LVGUO_HOST         监听网卡地址（默认 0.0.0.0；设 127.0.0.1 仅本机访问）
+            LVGUO_PORT         监听端口（默认 8780）
+            LVGUO_LISTEN       完整监听地址 IP:PORT（优先级高于 LVGUO_HOST/LVGUO_PORT）
+            LVGUO_DATA_DIR     数据与 core_hot 热更新库存放目录
+            LVGUO_UPDATE_MODE  Core 更新模式：default（官方源）/ custom（自建源）/ disabled（纯离线）
+            LVGUO_UPDATE_URL   custom 模式自建清单 URL
+            LVGUO_CORE_PATH    手动指定外部 liblvguo_core.so 路径
+          EOF
+            tar -czf "out/web/lvguo-web-${VER}-linux-${{ matrix.deb_arch }}.tar.gz" -C out/web lvguo-web liblvguo_core.so "使用说明.txt"
+          fi
+          if [[ "$KIND" != "ui" ]]; then
+            cp "target/${{ matrix.target }}/release/liblvguo_core.so" "out/core/lvguo-core-${{ matrix.id }}.so"
+          fi
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/pc/LvguoPC-${{ needs.test.outputs.version }}-linux-${{ matrix.deb_arch }}.tar.gz
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/web/lvguo-web-${{ needs.test.outputs.version }}-linux-${{ matrix.deb_arch }}.tar.gz
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-${{ matrix.id }}.so
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: matrix.id == 'linux-x86_64' && needs.test.outputs.kind != 'ui'
+        with:
+          path: sdk/lvguo_core.h
+          archive: false
+
+  build-windows:
+    name: Windows (64/32 位统一安装包 + Web 端)
+    needs: test
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,i686-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-dual
+      - name: 安装 Inno Setup 6
+        if: needs.test.outputs.kind != 'core'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") -and -not (Test-Path "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y
+          }
+      - name: 编译 Windows 64/32 位核心库与桌面/Web 宿主
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          LVGUO_CORE_VERSION: ${{ needs.test.outputs.kind == 'core' && needs.test.outputs.core_version || '' }}
+        shell: bash
+        run: |
+          if [[ "$KIND" == "core" ]]; then
+            cargo build -p lvguo-core --release --target x86_64-pc-windows-msvc
+            cargo build -p lvguo-core --release --target i686-pc-windows-msvc
+          else
+            cargo build --workspace --release --target x86_64-pc-windows-msvc
+            cargo build --workspace --release --target i686-pc-windows-msvc
+          fi
+      - name: 打包 Windows 通用安装包、Web 端与 Core 单文件
+        shell: pwsh
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          VER: ${{ needs.test.outputs.version }}
+        run: |
+          New-Item -ItemType Directory -Force -Path out/pc-stage-64, out/pc-stage-32, out/pc-dist, out/web/x64, out/web/x86, out/core | Out-Null
+          if ($env:KIND -ne 'core') {
+            $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $iscc)) { $iscc = "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" }
+
+            Copy-Item "target/x86_64-pc-windows-msvc/release/lvguo-pc.exe" "out/pc-stage-64/"
+            Copy-Item "target/x86_64-pc-windows-msvc/release/lvguo_core.dll" "out/pc-stage-64/"
+            Copy-Item "target/i686-pc-windows-msvc/release/lvguo-pc.exe" "out/pc-stage-32/"
+            Copy-Item "target/i686-pc-windows-msvc/release/lvguo_core.dll" "out/pc-stage-32/"
+
+            $abs64   = (Resolve-Path "out/pc-stage-64").Path
+            $abs32   = (Resolve-Path "out/pc-stage-32").Path
+            $absDist = (Resolve-Path "out/pc-dist").Path
+            & $iscc "/DAppVersion=$env:VER" "/DSourceDir64=$abs64" "/DSourceDir32=$abs32" "/DOutputDir=$absDist" "packaging/windows/lvguo-pc.iss"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+            @"
+          绿果PC $env:VER（Windows 64 / 32 位通用版）使用说明
+          =============================================
+
+          一、安装步骤
+            1. 解压当前压缩包后，双击运行 LvguoPC-Setup-$env:VER-win.exe。
+            2. 安装向导会自动识别 64 位（x64）或 32 位（x86）系统并写入对应核心组件。
+
+          二、功能提示
+            - 3.0.0 采用 Core（1.0.0）与 UI 彻底解耦架构，后续协议修复只需在「设置 -> Core 更新」单文件热替换。
+            - 若系统安装有 mpv，可在设置内切换外部播放器解锁独立硬解窗与着色器增强。
+          "@ | Set-Content -Path "out/pc-dist/使用说明.txt" -Encoding UTF8
+            Compress-Archive -Path "out/pc-dist/LvguoPC-Setup-$env:VER-win.exe", "out/pc-dist/使用说明.txt" -DestinationPath "out/pc-dist/LvguoPC-$env:VER-win.zip" -Force
+
+            $webUsage = @"
+          绿果 Web 服务端 $env:VER（Windows）使用说明
+          ======================================
+
+          一、快速启动
+            解压后运行 lvguo-web.exe（请保留同目录 lvguo_core.dll），浏览器访问输出地址（默认 http://127.0.0.1:8780）。
+            命令行示例：lvguo-web.exe --listen 0.0.0.0:8780 --data-dir .\data
+
+          二、常用环境变量
+            LVGUO_HOST         监听地址（默认 0.0.0.0；设 127.0.0.1 仅本机访问）
+            LVGUO_PORT         监听端口（默认 8780）
+            LVGUO_LISTEN       完整监听地址 IP:PORT
+            LVGUO_DATA_DIR     数据与 core_hot 热更新目录
+            LVGUO_UPDATE_MODE  Core 更新模式（default / custom / disabled）
+            LVGUO_UPDATE_URL   自建清单 URL（custom 模式生效）
+            LVGUO_CORE_PATH    指定外部 lvguo_core.dll 路径
+          "@
+            Copy-Item "target/x86_64-pc-windows-msvc/release/lvguo-web.exe" "out/web/x64/lvguo-web.exe"
+            Copy-Item "target/x86_64-pc-windows-msvc/release/lvguo_core.dll" "out/web/x64/lvguo_core.dll"
+            $webUsage | Set-Content -Path "out/web/x64/使用说明.txt" -Encoding UTF8
+            Compress-Archive -Path "out/web/x64/lvguo-web.exe", "out/web/x64/lvguo_core.dll", "out/web/x64/使用说明.txt" -DestinationPath "out/web/lvguo-web-$env:VER-windows-x64.zip" -Force
+
+            Copy-Item "target/i686-pc-windows-msvc/release/lvguo-web.exe" "out/web/x86/lvguo-web.exe"
+            Copy-Item "target/i686-pc-windows-msvc/release/lvguo_core.dll" "out/web/x86/lvguo_core.dll"
+            $webUsage | Set-Content -Path "out/web/x86/使用说明.txt" -Encoding UTF8
+            Compress-Archive -Path "out/web/x86/lvguo-web.exe", "out/web/x86/lvguo_core.dll", "out/web/x86/使用说明.txt" -DestinationPath "out/web/lvguo-web-$env:VER-windows-x86.zip" -Force
+          }
+          if ($env:KIND -ne 'ui') {
+            Copy-Item "target/x86_64-pc-windows-msvc/release/lvguo_core.dll" "out/core/lvguo-core-windows-x86_64.dll"
+            Copy-Item "target/i686-pc-windows-msvc/release/lvguo_core.dll" "out/core/lvguo-core-windows-x86.dll"
+          }
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/pc-dist/LvguoPC-${{ needs.test.outputs.version }}-win.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/web/lvguo-web-${{ needs.test.outputs.version }}-windows-x64.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/web/lvguo-web-${{ needs.test.outputs.version }}-windows-x86.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-windows-x86_64.dll
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-windows-x86.dll
+          archive: false
+
+  build-macos:
+    name: macOS 通用版 (Apple Silicon + Intel)
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-split
+      - name: 编译 Apple Silicon 与 Intel 双架构核心库与宿主
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          LVGUO_CORE_VERSION: ${{ needs.test.outputs.kind == 'core' && needs.test.outputs.core_version || '' }}
+        run: |
+          if [[ "$KIND" == "core" ]]; then
+            cargo build -p lvguo-core --release --target aarch64-apple-darwin
+            cargo build -p lvguo-core --release --target x86_64-apple-darwin
+          else
+            cargo build --workspace --release --target aarch64-apple-darwin
+            cargo build --workspace --release --target x86_64-apple-darwin
+          fi
+      - name: 打包 macOS 通用镜像、通用 Web 端与 Core 单文件
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          VER: ${{ needs.test.outputs.version }}
+        run: |
+          mkdir -p out/pc out/web/universal out/core
+          if [[ "$KIND" != "core" ]]; then
+            chmod +x packaging/macos/build_dmg.sh
+            ./packaging/macos/build_dmg.sh \
+              --arch universal \
+              --bin-arm64 target/aarch64-apple-darwin/release/lvguo-pc \
+              --bin-x64 target/x86_64-apple-darwin/release/lvguo-pc \
+              --core-arm64 target/aarch64-apple-darwin/release/liblvguo_core.dylib \
+              --core-x64 target/x86_64-apple-darwin/release/liblvguo_core.dylib \
+              --version "$VER" \
+              --out out/pc
+
+            cat > out/pc/使用说明.txt <<EOF
+          绿果PC ${VER}（macOS Universal 通用版）使用说明
+          =============================================
+
+          一、安装方式
+            1. 解压后打开 LvguoPC-${VER}-macOS.dmg，将「绿果PC」拖入 Applications。
+            2. 如系统首次提示来自未识别开发者，请在终端执行：
+               xattr -cr /Applications/绿果PC.app
+
+          二、说明
+            Universal 镜像同时原生支持 Apple Silicon (M 系列) 与 Intel Mac；
+            后续协议与解析更新可在应用内通过「Core 更新」单文件热替换完成。
+          EOF
+            (cd out/pc && zip -9 -q "LvguoPC-${VER}-macOS.zip" "LvguoPC-${VER}-macOS.dmg" "使用说明.txt")
+
+            lipo -create target/aarch64-apple-darwin/release/lvguo-web target/x86_64-apple-darwin/release/lvguo-web -output out/web/universal/lvguo-web
+            lipo -create target/aarch64-apple-darwin/release/liblvguo_core.dylib target/x86_64-apple-darwin/release/liblvguo_core.dylib -output out/web/universal/liblvguo_core.dylib
+            chmod +x out/web/universal/lvguo-web
+            cat > out/web/universal/使用说明.txt <<EOF
+          绿果 Web 服务端 ${VER}（macOS Universal）使用说明
+          =============================================
+
+          一、运行方式
+            chmod +x lvguo-web
+            ./lvguo-web --listen 0.0.0.0:8780 --data-dir ~/.lvguo-web
+
+          二、环境变量
+            LVGUO_HOST / LVGUO_PORT / LVGUO_LISTEN / LVGUO_DATA_DIR / LVGUO_UPDATE_MODE / LVGUO_UPDATE_URL / LVGUO_CORE_PATH
+          EOF
+            tar -czf "out/web/lvguo-web-${VER}-macos.tar.gz" -C out/web/universal lvguo-web liblvguo_core.dylib "使用说明.txt"
+          fi
+          if [[ "$KIND" != "ui" ]]; then
+            cp target/aarch64-apple-darwin/release/liblvguo_core.dylib out/core/lvguo-core-macos-aarch64.dylib
+            cp target/x86_64-apple-darwin/release/liblvguo_core.dylib out/core/lvguo-core-macos-x86_64.dylib
+          fi
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/pc/LvguoPC-${{ needs.test.outputs.version }}-macOS.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/web/lvguo-web-${{ needs.test.outputs.version }}-macos.tar.gz
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-macos-aarch64.dylib
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-macos-x86_64.dylib
+          archive: false
+
+  build-android:
+    name: Android / TV 通用 APK (64/32 位全架构兼容)
+    needs: test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        if: needs.test.outputs.kind != 'core'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: android-ndk
+      - name: 安装 Android SDK 组件与 NDK 26.3
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          yes | "$SDKMANAGER" --licenses >/dev/null || true
+          yes | "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0" "ndk;26.3.11579264"
+      - name: 交叉编译 32/64 位单文件 liblvguo_core.so
+        env:
+          LVGUO_CORE_VERSION: ${{ needs.test.outputs.kind == 'core' && needs.test.outputs.core_version || '' }}
+        run: |
+          NDK="$ANDROID_SDK_ROOT/ndk/26.3.11579264/toolchains/llvm/prebuilt/linux-x86_64/bin"
+          export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK/aarch64-linux-android23-clang"
+          export CC_aarch64_linux_android="$NDK/aarch64-linux-android23-clang"
+          export AR_aarch64_linux_android="$NDK/llvm-ar"
+          export CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$NDK/armv7a-linux-androideabi23-clang"
+          export CC_armv7_linux_androideabi="$NDK/armv7a-linux-androideabi23-clang"
+          export AR_armv7_linux_androideabi="$NDK/llvm-ar"
+          cargo build -p lvguo-core --release --target aarch64-linux-android
+          cargo build -p lvguo-core --release --target armv7-linux-androideabi
+      - name: 打包 Android TV 全架构通用 APK 与整理 Core 单文件
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          VER: ${{ needs.test.outputs.version }}
+          CODE: ${{ needs.test.outputs.version_code }}
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          mkdir -p out/apk out/core
+          if [[ "$KIND" != "core" ]]; then
+            if [[ -n "${KEYSTORE_B64}" ]]; then
+              echo "${KEYSTORE_B64}" | base64 -d > "${RUNNER_TEMP}/release.keystore"
+              export LVGUO_KEYSTORE="${RUNNER_TEMP}/release.keystore"
+            fi
+            python3 hosts/android-tv/build_apk.py --abi all --version-code "$CODE" --version-name "$VER" --out "out/apk/LvguoTV-${VER}.apk"
+            cat > out/apk/使用说明.txt <<EOF
+          绿果TV ${VER}（Android 6.0+ 通用版）使用说明
+          =========================================
+
+          一、适用设备
+            智能电视、投影仪、电视盒子及 Android 手机（同时内置 arm64-v8a 与 armeabi-v7a 核心）。
+
+          二、安装方法
+            解压本压缩包后，将 LvguoTV-${VER}.apk 拷贝至 U 盘或通过局域网传输工具安装到设备即可；
+            打开无需邀请码或强制登录，支持遥控器方向键导航及同局域网手机扫码遥控（默认端口 8765）。
+
+          三、后续升级提示
+            3.0.0 已彻底切换为 lvguo-core 共享核心架构，建议长期升级至本版本；
+            后续可在设置页分别检查「软件更新」与「Core 单文件热更新」。
+          EOF
+            (cd out/apk && zip -9 -q "LvguoTV-${VER}.zip" "LvguoTV-${VER}.apk" "使用说明.txt")
+          fi
+          if [[ "$KIND" != "ui" ]]; then
+            cp target/aarch64-linux-android/release/liblvguo_core.so out/core/lvguo-core-android-arm64-v8a.so
+            cp target/armv7-linux-androideabi/release/liblvguo_core.so out/core/lvguo-core-android-armeabi-v7a.so
+          fi
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'core'
+        with:
+          path: out/apk/LvguoTV-${{ needs.test.outputs.version }}.zip
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-android-arm64-v8a.so
+          archive: false
+      - uses: actions/upload-artifact@v7
+        if: needs.test.outputs.kind != 'ui'
+        with:
+          path: out/core/lvguo-core-android-armeabi-v7a.so
+          archive: false
+
+  summary:
+    name: 输出构建产物与用途清单
+    needs: [test, build-linux, build-windows, build-macos, build-android]
+    if: always() && needs.test.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 写入构建产物说明
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          VER: ${{ needs.test.outputs.version }}
+          CORE_VER: ${{ needs.test.outputs.core_version }}
+        run: |
+          {
+            if [[ "$KIND" == "core" ]]; then
+              echo "## 绿果 Core 构建产物说明（core-v${CORE_VER}）"
+            elif [[ "$KIND" == "ui" ]]; then
+              echo "## 绿果客户端构建产物说明（v${VER}）"
+            else
+              echo "## 绿果全平台构建产物说明（UI v${VER} / Core v${CORE_VER}）"
+            fi
+            echo ""
+            if [[ "$KIND" != "core" ]]; then
+              echo "### 客户端与服务端压缩包交付文件（均含 \`使用说明.txt\`）"
+              echo "| 文件名 | 适用平台与用途 | 说明 |"
+              echo "| --- | --- | --- |"
+              echo "| \`LvguoTV-${VER}.zip\` | Android 手机 / 电视（64/32 位通用） | 内含 \`LvguoTV-${VER}.apk\` 与 \`使用说明.txt\`，同时支持 \`arm64-v8a\` 与 \`armeabi-v7a\` |"
+              echo "| \`LvguoPC-${VER}-win.zip\` | Windows 64/32 位统一安装包 | 内含 \`LvguoPC-Setup-${VER}-win.exe\` 与 \`使用说明.txt\`，避开浏览器裸 exe 拦截 |"
+              echo "| \`LvguoPC-${VER}-macOS.zip\` | macOS Universal 通用镜像包 | 内含 \`LvguoPC-${VER}-macOS.dmg\` 与 \`使用说明.txt\`（M 系 + Intel） |"
+              echo "| \`lvguo-web-${VER}-macos.tar.gz\` | macOS Web 服务端通用包 | 内含 \`lvguo-web\`、\`liblvguo_core.dylib\` 与 \`使用说明.txt\` |"
+              echo "| \`lvguo-web-${VER}-windows-{x64,x86}.zip\` | Windows Web 服务端完整包 | 按系统位数区分：64 位选 \`x64\`，32 位选 \`x86\`，含 \`使用说明.txt\` |"
+              echo "| \`LvguoPC-${VER}-linux-{amd64,i386,arm64,armhf}.tar.gz\` | Linux PC 安装包 | 内含 \`.deb\` 安装包与 \`使用说明.txt\` |"
+              echo "| \`lvguo-web-${VER}-linux-{amd64,i386,arm64,armhf}.tar.gz\` | Linux Web 服务端完整包 | 解压即用或注册 systemd，含 \`使用说明.txt\` |"
+              echo ""
+            fi
+            if [[ "$KIND" != "ui" ]]; then
+              echo "### Core 热更新动态库与 SDK（core-v${CORE_VER}）"
+              echo "| 文件名 | 适用目标 | 用途 |"
+              echo "| --- | --- | --- |"
+              echo "| \`lvguo-core-android-arm64-v8a.so\` / \`android-armeabi-v7a.so\` | Android TV 64/32 位 | TV 端单文件热更新包 |"
+              echo "| \`lvguo-core-windows-x86_64.dll\` / \`windows-x86.dll\` | Windows 64/32 位 | PC/Web 单文件热更新与 SDK 集成库 |"
+              echo "| \`lvguo-core-linux-{x86_64,x86,aarch64,armv7}.so\` | Linux 全架构 | Linux 端单文件热更新与 SDK 集成库 |"
+              echo "| \`lvguo-core-macos-{aarch64,x86_64}.dylib\` | macOS 双架构 | macOS 端单文件热更新与 SDK 集成库 |"
+              echo "| \`lvguo_core.h\` | 全部宿主语言 | C-ABI 集成头文件（见仓库 \`sdk/\` 文档） |"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-release:
+    name: 发布 GitHub Release（按 Tag 类型独立发布 UI 或 Core）
+    if: always() && (needs.test.outputs.kind == 'core' || needs.test.outputs.kind == 'ui') && (needs.build-linux.result == 'success' || needs.build-windows.result == 'success' || needs.build-macos.result == 'success' || needs.build-android.result == 'success')
+    needs: [test, build-linux, build-windows, build-macos, build-android]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+          skip-decompress: true
+      - name: 整理对应层级的 Release 产物
+        env:
+          KIND: ${{ needs.test.outputs.kind }}
+          TAG: ${{ needs.test.outputs.tag }}
+          VER: ${{ needs.test.outputs.version }}
+          CORE_VER: ${{ needs.test.outputs.core_version }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p release-assets
+          if [[ "$KIND" == "ui" ]]; then
+            find artifacts -maxdepth 2 -type f \( -name "LvguoTV-*.zip" -o -name "LvguoPC-*.zip" -o -name "LvguoPC-*.tar.gz" -o -name "lvguo-web-*.zip" -o -name "lvguo-web-*.tar.gz" \) -exec cp -f {} release-assets/ \;
+            test -f "release-assets/LvguoTV-${VER}.zip"
+            test -f "release-assets/LvguoPC-${VER}-win.zip"
+            test -f "release-assets/LvguoPC-${VER}-macOS.zip"
+            test -f "release-assets/lvguo-web-${VER}-macos.tar.gz"
+            test -f "release-assets/lvguo-web-${VER}-windows-x64.zip"
+            test -f "release-assets/lvguo-web-${VER}-windows-x86.zip"
+
+            cat > release-notes.md <<EOF
+          ## 绿果 ${VER}（重大架构升级 · 强烈建议升级）
+
+          本次 **${VER}** 为全新 **Core × 极薄宿主解耦架构** 正式版：全部协议解析、请求签名、流式解密与下载能力下沉至 \`lvguo-core\`，后续仅持续维护 \`lvguo-core\` 核心引擎（各端支持单文件热更新），旧版分支已停止维护，**强烈建议全部用户升级至本版本**。
+
+          > 为避免浏览器拦截裸安装包，全部交付产物均已打包为 \`.zip\` 或 \`.tar.gz\` 压缩包，内部均附带 \`使用说明.txt\`，解压后按说明安装或运行即可。
+
+          ### 附件说明
+          | 文件 | 适用平台 | 内容说明 |
+          | --- | --- | --- |
+          | \`LvguoTV-${VER}.zip\` | Android TV / 投影仪 / 手机 | 含 \`LvguoTV-${VER}.apk\`（64/32 位通用）+ \`使用说明.txt\` |
+          | \`LvguoPC-${VER}-win.zip\` | Windows 64 / 32 位 | 含 \`LvguoPC-Setup-${VER}-win.exe\` 统一安装程序 + \`使用说明.txt\` |
+          | \`LvguoPC-${VER}-macOS.zip\` | macOS（Apple Silicon + Intel） | 含 \`LvguoPC-${VER}-macOS.dmg\` Universal 镜像 + \`使用说明.txt\` |
+          | \`lvguo-web-${VER}-macos.tar.gz\` | macOS Web 服务端 | 含通用 \`lvguo-web\` + \`liblvguo_core.dylib\` + \`使用说明.txt\` |
+          | \`lvguo-web-${VER}-windows-x64.zip\` / \`x86.zip\` | Windows Web 服务端 | 含对应位数 \`lvguo-web.exe\` + \`lvguo_core.dll\` + \`使用说明.txt\` |
+          | \`LvguoPC-${VER}-linux-{amd64,i386,arm64,armhf}.tar.gz\` | Linux 桌面客户端 | 含对应架构 \`.deb\` 安装包 + \`使用说明.txt\` |
+          | \`lvguo-web-${VER}-linux-{amd64,i386,arm64,armhf}.tar.gz\` | Linux Web 服务端 | 含 \`lvguo-web\` + \`liblvguo_core.so\` + \`使用说明.txt\` |
+          EOF
+          elif [[ "$KIND" == "core" ]]; then
+            find artifacts -maxdepth 2 -type f -name "lvguo_core.h" -exec cp -f {} release-assets/ \;
+            python3 - <<'PY'
+          import hashlib, json, os, shutil
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          ver = os.environ["CORE_VER"]
+          repo = os.environ["REPO"]
+          out = Path("release-assets")
+          targets = [
+              ("linux-x86_64", "lvguo-core-linux-x86_64.so", "liblvguo_core.so"),
+              ("linux-x86", "lvguo-core-linux-x86.so", "liblvguo_core.so"),
+              ("linux-aarch64", "lvguo-core-linux-aarch64.so", "liblvguo_core.so"),
+              ("linux-armv7", "lvguo-core-linux-armv7.so", "liblvguo_core.so"),
+              ("windows-x86_64", "lvguo-core-windows-x86_64.dll", "lvguo_core.dll"),
+              ("windows-x86", "lvguo-core-windows-x86.dll", "lvguo_core.dll"),
+              ("macos-aarch64", "lvguo-core-macos-aarch64.dylib", "liblvguo_core.dylib"),
+              ("macos-x86_64", "lvguo-core-macos-x86_64.dylib", "liblvguo_core.dylib"),
+              ("android-arm64-v8a", "lvguo-core-android-arm64-v8a.so", "liblvguo_core.so"),
+              ("android-armeabi-v7a", "lvguo-core-android-armeabi-v7a.so", "liblvguo_core.so"),
+          ]
+          manifests = {}
+          for target, fname, orig_name in targets:
+              matches = list(Path("artifacts").rglob(fname))
+              if matches:
+                  dst = out / fname
+                  shutil.copy2(matches[0], dst)
+                  data = dst.read_bytes()
+                  manifests[target] = {
+                      "filename": orig_name,
+                      "url": f"https://github.com/{repo}/releases/download/{tag}/{fname}",
+                      "sha256": hashlib.sha256(data).hexdigest(),
+                      "size": len(data),
+                  }
+          (out / "core-manifest.json").write_text(
+              json.dumps({"schema": 1, "abiVersion": 1, "version": ver, "artifacts": manifests}, indent=2),
+              encoding="utf-8",
+          )
+          PY
+            cat > release-notes.md <<EOF
+          ## Lvguo Core ${CORE_VER}（ABI v1）
+
+          跨端统一核心动态库正式基线，适用于各端 3.0+ 客户端单文件热更新与第三方 SDK / AI 协同集成（接口与协议说明见仓库 \`sdk/\`）。
+
+          - 包含全平台单文件核心库：Android (\`arm64-v8a\` / \`armeabi-v7a\`)、Windows (\`x86_64\` / \`x86\`)、macOS (\`aarch64\` / \`x86_64\`)、Linux (\`x86_64\` / \`x86\` / \`aarch64\` / \`armv7\`)
+          - 附带 C-ABI 头文件 \`lvguo_core.h\` 与热更清单 \`core-manifest.json\`
+          EOF
+          fi
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: ${{ needs.test.outputs.kind == 'core' && format('Lvguo Core {0}', needs.test.outputs.core_version) || format('Lvguo {0}', needs.test.outputs.version) }}
+          tag_name: ${{ needs.test.outputs.tag }}
+          body_path: release-notes.md
+          files: release-assets/*
