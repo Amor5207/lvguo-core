@@ -16,7 +16,7 @@
 [![Arch](https://img.shields.io/badge/arch-ARMv7%20%7C%20ARM64%20%7C%20x86%20%7C%20x86__64-0d9488?style=flat-square)](#下载与安装)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
 
-[下载 v3.0.5](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.5) · [Core 与 SDK 发布](https://github.com/Amor5207/lvguo-core/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [架构设计](#架构设计) · [SDK 接入与 AI 构建](#sdk-接入与-ai-协同开发) · [构建项目](#构建项目)
+[下载 v3.0.5](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.5) · [Core 与 SDK 发布](https://github.com/Amor5207/lvguo-core/releases) · [功能特性](#功能特性) · [幕间 AI 演示](#ai-项目演示幕间-mujian) · [界面预览](#界面预览) · [架构设计](#架构设计) · [SDK 接入与 AI 构建](#sdk-接入与-ai-协同开发) · [构建项目](#构建项目)
 
 <br>
 
@@ -59,6 +59,26 @@
 
 - **单二进制 + 单动态库开箱运行**：内置统一前端资产表，无任何外部配置文件与前端构建依赖；支持一键注册/卸载 Linux `systemd` 与 Windows 计划任务。
 - **桌面影院交互与服务端解密**：内置浅色 / 深色 / 跟随系统主题、即时展开的全局搜索联想框、沉浸式刷剧流、弹窗式选集与评论面板、键盘快捷键，以及服务端实时 CENC 解密流直出。
+
+---
+
+## AI 项目演示：幕间 MUJIAN
+
+[幕间 MUJIAN](https://github.com/Amor5207/mujian) 是面向桌面浏览器的影院风格短剧界面。[在线体验](https://mj.pengfei.ink/) · [项目源码与部署说明](https://github.com/Amor5207/mujian)
+
+项目使用 **WorkBuddy + GLM-5.4** 辅助设计与开发，基于 **lvguo-core 1.0.1（ABI v1）** 和 **Web 宿主 3.0.5** 构建。浏览器通过宿主提供的 HTTP 接口获取内容、管理账号与观看进度，并使用媒体接口播放剧集。
+
+界面围绕影院舞台组织首页推荐、分类与榜单、剧集详情和播放器，以 Three.js 呈现封面与场景转场，结合骨架屏、连续加载、下一集预加载和浏览器本地手势识别，探索独立 UI 的交互方式。移动设备访问时会引导使用电脑打开。
+
+幕间展示了共享核心与独立界面的协作方式：开发者可以让 AI 辅助梳理需求、生成原型与实现代码，在稳定的核心接口之上快速构建并持续打磨具有不同视觉风格的客户端。完整设计提示词、后端文件和多平台部署方法见 [幕间 README](https://github.com/Amor5207/mujian#readme)。
+
+<table>
+  <tr>
+    <td width="50%"><img src="https://raw.githubusercontent.com/Amor5207/mujian/main/docs/screenshots/home.png" alt="幕间首页"></td>
+    <td width="50%"><img src="https://raw.githubusercontent.com/Amor5207/mujian/main/docs/screenshots/rank.png" alt="幕间榜单"></td>
+  </tr>
+  <tr><td align="center"><sub>幕间首页与影院舞台</sub></td><td align="center"><sub>榜单与剧集浏览</sub></td></tr>
+</table>
 
 ---
 
