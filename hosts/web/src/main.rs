@@ -243,7 +243,8 @@ fn main() {
         "download": false,
         "nativePlayer": false,
         "gpuShaders": false,
-        "coreUpdate": true
+        "coreUpdate": true,
+        "appVersion": env!("CARGO_PKG_VERSION")
     })
     .to_string();
 

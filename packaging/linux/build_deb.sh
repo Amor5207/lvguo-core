@@ -5,7 +5,7 @@ set -euo pipefail
 ARCH="amd64"
 BIN_PATH=""
 CORE_PATH=""
-APP_VERSION="3.0.4"
+APP_VERSION="3.0.5"
 OUT_DIR=""
 
 while [[ $# -gt 0 ]]; do

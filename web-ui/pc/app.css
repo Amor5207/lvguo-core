@@ -1323,3 +1323,7 @@ html[data-standalone="1"] #nav,html[data-standalone="1"] #topbar,html[data-stand
 }
 
 
+
+/* 设置-更新区：小号紧凑按钮（与设置其他控件一致） */
+.srow .upd-acts{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+.srow .upd-acts .btn{height:28px;padding:0 11px;font-size:12.5px;border-radius:8px;box-shadow:none}

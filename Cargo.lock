@@ -1526,7 +1526,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-host-common"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "libloading",
  "serde_json",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-pc"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "dirs 5.0.1",
  "lvguo-host-common",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-web"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "dirs 5.0.1",
  "lvguo-host-common",

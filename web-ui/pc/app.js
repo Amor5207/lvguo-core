@@ -1845,28 +1845,31 @@
     var coreStatus = null, appUpdate = null, dlSettings = null, activeFlt = 'all';
     function coreBody() {
       var mode = (coreStatus && coreStatus.mode) || 'default';
-      var channelHtml = row('更新渠道', '',
+      var appVer = (appUpdate && appUpdate.currentVersion) || LV.caps.appVersion || '';
+      var coreVer = (coreStatus && coreStatus.currentVersion) || LV.caps.coreVersion || '';
+      var verLine = 'App ' + (appVer || '—') + ' · Core ' + (coreVer || '—') + (LV.caps.target ? ' · ' + LV.caps.target : '');
+      var channelHtml = row('更新渠道', verLine,
         seg([['default', '官方默认'], ['custom', '自建渠道'], ['disabled', '关闭更新']], mode, 'data-coremode')) +
         (mode === 'custom' ? row('更新地址', '', '<input class="dl-in" id="core-custom-url" placeholder="https://your-host/update" value="' + esc((coreStatus && coreStatus.customUrl) || '') + '">') : '');
       var appHtml = '';
       if (appUpdate && appUpdate.hasUpdate) {
         var dlUrl = appUpdate.downloadUrl || appUpdate.releaseUrl || '';
-        appHtml = row('软件更新', esc(appUpdate.latestVersion),
-          '<div class="dl-acts"><button class="btn" data-appcheck>重新检查</button>' +
-          (dlUrl ? '<a class="btn primary" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载新版</a>' : '') + '</div>');
+        appHtml = row('软件更新', '发现新版本 ' + esc(appUpdate.latestVersion),
+          '<div class="upd-acts"><button class="btn sm ghost" data-appcheck>重新检查</button>' +
+          (dlUrl ? '<a class="btn sm ghost" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载</a>' : '') + '</div>');
       } else {
-        var appSub = !appUpdate ? ''
-          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.4'));
-        appHtml = row('软件更新', appSub, '<button class="btn" data-appcheck>检查更新</button>');
+        var appSub = !appUpdate ? '当前 ' + esc(appVer || '—')
+          : (appUpdate.disabled ? '已关闭自动更新' : '当前 ' + esc(appUpdate.currentVersion || appVer || '—'));
+        appHtml = row('软件更新', appSub, '<div class="upd-acts"><button class="btn sm ghost" data-appcheck>检查更新</button></div>');
       }
       if (!coreStatus) return channelHtml + appHtml + row('Core 更新', '', '');
       var compSub = coreStatus.restartRequired
-        ? esc(coreStatus.stagedVersion || coreStatus.latestVersion) + '（重启生效）'
+        ? '新版本 ' + esc(coreStatus.stagedVersion || coreStatus.latestVersion) + ' 已下载，重启后生效'
         : (coreStatus.lastError ? '<span style="color:var(--danger)">' + esc(coreStatus.lastError) + '</span>'
-          : (esc(coreStatus.currentVersion || '1.0.0') + (coreStatus.stagedExists ? '（待重启生效）' : '')));
+          : '当前 ' + esc(coreStatus.currentVersion || '1.0.1'));
       return channelHtml + appHtml +
-        row('Core 更新', compSub, '<div class="dl-acts"><button class="btn primary" data-core="check">检查更新</button>' +
-          (coreStatus.stagedExists ? '<button class="btn" data-core="rollback">恢复默认</button>' : '') + '</div>');
+        row('Core 更新', compSub, '<div class="upd-acts"><button class="btn sm ghost" data-core="check">检查更新</button>' +
+          ((coreStatus.restartRequired || coreStatus.stagedExists) ? '<button class="btn sm ghost" data-core="rollback">恢复默认</button>' : '') + '</div>');
     }
     function dlBody() {
       if (!dlSettings) return row('下载配置', '正在读取…', '');
@@ -1894,7 +1897,8 @@
         rg('dmOpacity', '不透明度', 0.2, 1, 0.05, pct) + rg('dmSpeed', '速度', 0.6, 1.8, 0.1, mul) + rg('dmSize', '字号', 0.7, 1.6, 0.1, pct);
       if (k === 'look') return pick('theme', '主题', '', [['auto', '跟随系统'], ['light', '浅色'], ['dark', '深色']]);
       if (k === 'keys') return '<div class="skeys">' + [['/', '搜索'], ['空格 / K', '播放 / 暂停'], ['← →', '后退 / 前进 10 秒'], ['↑ ↓', '上一集 / 下一集'], ['滚轮', '切换剧集'], ['F', '全屏'], ['M', '静音'], ['D', '弹幕开关'], ['T', '选集弹窗'], ['Esc', '关闭弹窗 / 退出播放']].map(function (x) { return '<div><span>' + x[1] + '</span><kbd>' + x[0] + '</kbd></div>'; }).join('') + '</div>';
-      var verTxt = LV.caps.coreVersion ? ('Core ' + LV.caps.coreVersion + (LV.caps.target ? ' · ' + LV.caps.target : '')) : '简洁、轻量的短剧播放器';
+      var appVer = LV.caps.appVersion || (appUpdate && appUpdate.currentVersion) || '';
+      var verTxt = (appVer ? 'App ' + appVer + ' · ' : '') + (LV.caps.coreVersion ? ('Core ' + LV.caps.coreVersion + (LV.caps.target ? ' · ' + LV.caps.target : '')) : '简洁、轻量的短剧播放器');
       return row(brandName(), verTxt, '');
     }
     var root = mount('<div class="setp-v2">' +

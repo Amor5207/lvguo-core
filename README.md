@@ -6,9 +6,9 @@
 
 **用遥控器大屏看剧，用桌面端沉浸追剧，更用单一共享核心自由衍生你自己的客户端。**
 
-核心引擎 **`lvguo-core`（1.0.1 · ABI v1）** × 全端官方宿主与界面发行版（**3.0.4**）
+核心引擎 **`lvguo-core`（1.0.1 · ABI v1）** × 全端官方宿主与界面发行版（**3.0.5**）
 
-[![Client Release](https://img.shields.io/badge/client-v3.0.4-2ea44f?style=flat-square)](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.4)
+[![Client Release](https://img.shields.io/badge/client-v3.0.5-2ea44f?style=flat-square)](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.5)
 [![Core ABI](https://img.shields.io/badge/core-1.0.1%20(ABI%20v1)-16a34a?style=flat-square)](sdk/lvguo_core.h)
 [![Downloads](https://img.shields.io/github/downloads/Amor5207/lvguo-core/total?style=flat-square&label=downloads&color=0d9488)](https://github.com/Amor5207/lvguo-core/releases)
 [![Android](https://img.shields.io/badge/Android-6.0%2B-3ddc84?style=flat-square&logo=android&logoColor=white)](#下载与安装)
@@ -16,7 +16,7 @@
 [![Arch](https://img.shields.io/badge/arch-ARMv7%20%7C%20ARM64%20%7C%20x86%20%7C%20x86__64-0d9488?style=flat-square)](#下载与安装)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square)](LICENSE)
 
-[下载 v3.0.4](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.4) · [Core 与 SDK 发布](https://github.com/Amor5207/lvguo-core/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [架构设计](#架构设计) · [SDK 接入与 AI 构建](#sdk-接入与-ai-协同开发) · [构建项目](#构建项目)
+[下载 v3.0.5](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.5) · [Core 与 SDK 发布](https://github.com/Amor5207/lvguo-core/releases) · [功能特性](#功能特性) · [界面预览](#界面预览) · [架构设计](#架构设计) · [SDK 接入与 AI 构建](#sdk-接入与-ai-协同开发) · [构建项目](#构建项目)
 
 <br>
 
@@ -32,30 +32,30 @@
 
 针对不同使用者，项目提供两条明确路径：
 
-- **面向普通用户**：直接下载 **3.0.4 全端通用包**（Android TV APK、Windows 统一安装程序、macOS Universal 镜像或 Linux/Web 包），开箱即用；未来只需在设置中通过**单文件 Core 热更新**即可保持解析与播放可用。
+- **面向普通用户**：直接下载 **3.0.5 全端通用包**（Android TV APK、Windows 统一安装程序、macOS Universal 镜像或 Linux/Web 包），开箱即用；未来只需在设置中通过**单文件 Core 热更新**即可保持解析与播放可用。
 - **面向开发者与 AI 玩家**：直接集成 **`lvguo-core`（v1.0.1）** 提供的 C-ABI、HTTP RPC（`POST /api/call`）或 Android JNI 接口，结合 **AI 编程助手**，在任意语言和界面框架下快速构建完全符合自己交互习惯的客户端。
 
 > **维护范围声明（请务必知悉）**
 > - **长期持续维护：`lvguo-core`（v1.0.1 核心引擎）** —— 持续跟进协议适配、请求签名、流媒体解密、下载器优化与稳定性修复，各端通过替换**单个核心动态库文件**即可热升级。
-> - **仅修致命 Bug：官方上层 UI（v3.0.4）** —— Android TV、PC 客户端及 Web 前端自 `3.0` 起已稳定定型，**除影响主流程崩溃/不可用的致命 Bug 外，不再进行常规 UI 改版或新增界面功能**。
+> - **仅修致命 Bug：官方上层 UI（v3.0.5）** —— Android TV、PC 客户端及 Web 前端自 `3.0` 起已稳定定型，**除影响主流程崩溃/不可用的致命 Bug 外，不再进行常规 UI 改版或新增界面功能**。
 
 ---
 
 ## 功能特性
 
-### Android TV / 投影仪端（v3.0.4）
+### Android TV / 投影仪端（v3.0.5）
 
 - **大屏与遥控器原生交互**：针对 `1920×1080` 大屏打造，支持方向键焦点导航、数字键直达选集、长按快进快退，以及免安装**局域网手机扫码遥控**。
 - **Media3 硬件解码与低内存流式解密**：`liblvguo_core.so` 在本地回环启动轻量流媒体网关直接供 ExoPlayer / Media3 拉流拖拽，支持多倍速、选季选集、播完自动连播下一季与双路预载。
 - **完整观影体验与单包全兼容**：内置实时评论弹幕、观看健康提醒与可选账号云同步；**单个 APK 同时内置 `arm64-v8a` 与 `armeabi-v7a` 双架构核心**，兼容老电视盒子与新款安卓设备。
 
-### PC 桌面客户端 · 绿果PC（v3.0.4）
+### PC 桌面客户端 · 绿果PC（v3.0.5）
 
 - **极薄宿主免捆绑大体积内核**：Windows / macOS 优先复用系统 WebView 无边框窗口，Linux 或老系统自动拉起桌面浏览器；安装体积仅数 MB。
 - **多线程离线下载与断点续传**：支持整剧或批量选集缓存、HTTP Range 多线程并发下载、全局限速与按剧自动分目录落盘（落盘前完成 CENC 解密）。
 - **可选 `mpv` 独立硬解与 GPU 画质增强**：检测到本机安装 [`mpv`](https://mpv.io/) 时解锁独立硬件解码窗口，并在设备 WebGL2/GPU 支持时自动呈现 **CAS 锐化**、**FSR 超分**、**AI 超清（Anime4K）** 与画面补帧开关。
 
-### Web 服务端（v3.0.4）
+### Web 服务端（v3.0.5）
 
 - **单二进制 + 单动态库开箱运行**：内置统一前端资产表，无任何外部配置文件与前端构建依赖；支持一键注册/卸载 Linux `systemd` 与 Windows 计划任务。
 - **桌面影院交互与服务端解密**：内置浅色 / 深色 / 跟随系统主题、即时展开的全局搜索联想框、沉浸式刷剧流、弹窗式选集与评论面板、键盘快捷键，以及服务端实时 CENC 解密流直出。
@@ -104,14 +104,14 @@
 
 ```mermaid
 flowchart TB
-    subgraph UI["表现层 · UI（v3.0.4 参照实现 / 可用 AI 自由重构）"]
+    subgraph UI["表现层 · UI（v3.0.5 参照实现 / 可用 AI 自由重构）"]
         direction LR
         WebUI["web-ui 原生前端"]
         TvUI["Android TV 大屏端"]
         CustomUI["自定义 / AI 客户端"]
     end
 
-    subgraph HOST["宿主层 · Host（v3.0.4 极薄壳层 · 双次防崩回退）"]
+    subgraph HOST["宿主层 · Host（v3.0.5 极薄壳层 · 双次防崩回退）"]
         direction LR
         PcWeb["hosts/pc & hosts/web"]
         Common["hosts/common 热更加载器"]
@@ -157,13 +157,13 @@ flowchart TB
 | 目录 / 文件 | 版本 | 职责说明 |
 | --- | --- | --- |
 | [`core/`](./core) | `1.0.1` | 核心共享动态库（`cdylib` + `rlib`），内部含 `cenc/`、`sign/`、`upstream/`、`runtime.rs`、`media_server.rs`、`downloader.rs`、`http_server.rs`、`updater.rs`、`jni_bridge.rs`、`limiter.rs` 等模块。 |
-| [`hosts/common/`](./hosts/common) | `3.0.4` | PC 与 Web 共用加载器：负责单文件热更查找、ABI 验证、`.attempt` 回退与内嵌 `web-ui/` 资产查找表。 |
-| [`hosts/pc/`](./hosts/pc) | `3.0.4` | 桌面宿主：启动无边框 WebView 或本地浏览器，注册原生播放器回调以联动本地 `mpv` 与着色器参数。 |
-| [`hosts/web/`](./hosts/web) | `3.0.4` | 极薄 Web 服务端宿主：托管统一前端并支持一键 `service install|status|uninstall` 系统服务托管。 |
-| [`hosts/android-tv/`](./hosts/android-tv) | `3.0.4` | Android TV 原生宿主与大屏 UI（含 Media3 播放器、局域网手机遥控服务及双架构打包脚本 [`build_apk.py`](./hosts/android-tv/build_apk.py)）。 |
-| [`web-ui/`](./web-ui) | `3.0.4` | PC 与 Web 共享的原生 HTML/CSS/JS 前端与着色器实现（[`gpu_fx.js`](./web-ui/shared/gpu_fx.js)）。 |
+| [`hosts/common/`](./hosts/common) | `3.0.5` | PC 与 Web 共用加载器：负责单文件热更查找、ABI 验证、`.attempt` 回退与内嵌 `web-ui/` 资产查找表。 |
+| [`hosts/pc/`](./hosts/pc) | `3.0.5` | 桌面宿主：启动无边框 WebView 或本地浏览器，注册原生播放器回调以联动本地 `mpv` 与着色器参数。 |
+| [`hosts/web/`](./hosts/web) | `3.0.5` | 极薄 Web 服务端宿主：托管统一前端并支持一键 `service install|status|uninstall` 系统服务托管。 |
+| [`hosts/android-tv/`](./hosts/android-tv) | `3.0.5` | Android TV 原生宿主与大屏 UI（含 Media3 播放器、局域网手机遥控服务及双架构打包脚本 [`build_apk.py`](./hosts/android-tv/build_apk.py)）。 |
+| [`web-ui/`](./web-ui) | `3.0.5` | PC 与 Web 共享的原生 HTML/CSS/JS 前端与着色器实现（[`gpu_fx.js`](./web-ui/shared/gpu_fx.js)）。 |
 | [`sdk/`](./sdk) | `ABI v1` | 公开头文件 [`sdk/lvguo_core.h`](./sdk/lvguo_core.h)、全量接口文档 [`sdk/API_SPEC.md`](./sdk/API_SPEC.md)、热更新规范 [`sdk/UPDATE_SPEC.md`](./sdk/UPDATE_SPEC.md)。 |
-| [`packaging/`](./packaging) | `3.0.4` | Windows Inno Setup 统一安装脚本、macOS Universal `.dmg` 脚本与 Linux `.deb` 打包脚本。 |
+| [`packaging/`](./packaging) | `3.0.5` | Windows Inno Setup 统一安装脚本、macOS Universal `.dmg` 脚本与 Linux `.deb` 打包脚本。 |
 
 ---
 
@@ -290,26 +290,26 @@ Android 应用只需将 `liblvguo_core.so` 置于对应 ABI 目录并通过 `ink
 | 项目 | 数值 | 说明 |
 | --- | --- | --- |
 | 核心引擎 **`lvguo-core`** | `1.0.1`（`ABI v1`） | 持续维护版本；通过 `core-v*` Tag 独立分发单文件动态库与 SDK |
-| **Android TV / PC / Web 宿主与前端** | `3.0.4`（内部版本号 `3004`） | 官方参照版；除致命 Bug 外不再更新 UI（通过 `v*` Tag 发布） |
+| **Android TV / PC / Web 宿主与前端** | `3.0.5`（内部版本号 `3005`） | 官方参照版；除致命 Bug 外不再更新 UI（通过 `v*` Tag 发布） |
 | Android 应用包名 | `ink.pengfei.lvguo` | minSdk 23（Android 6.0+）/ targetSdk 28 |
 
 ---
 
 ## 下载与安装
 
-### 客户端与服务端通用包（v3.0.4）
+### 客户端与服务端通用包（v3.0.5）
 
-从 [v3.0.4 Release](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.4) 按系统下载对应压缩包（全部采用 `.zip` / `.tar.gz` 打包以避开浏览器拦截，内含安装程序/二进制与 `使用说明.txt`）：
+从 [v3.0.5 Release](https://github.com/Amor5207/lvguo-core/releases/tag/v3.0.5) 按系统下载对应压缩包（全部采用 `.zip` / `.tar.gz` 打包以避开浏览器拦截，内含安装程序/二进制与 `使用说明.txt`）：
 
 | 文件名 | 适用平台与架构 | 说明 |
 | --- | --- | --- |
-| `LvguoTV-3.0.4.zip` | Android 6.0+ 电视 / 投影仪 / 手机 | 内含 **64/32 位通用单包** `LvguoTV-3.0.4.apk`（`arm64-v8a` + `armeabi-v7a`）与 `使用说明.txt` |
-| `LvguoPC-3.0.4-win.zip` | Windows 64 位 / 32 位（Win7+） | 内含**统一安装程序** `LvguoPC-Setup-3.0.4-win.exe`（自动识别系统位数）与 `使用说明.txt` |
-| `LvguoPC-3.0.4-macOS.zip` | macOS（Apple Silicon M 系 + Intel） | 内含 **Universal 通用镜像** `LvguoPC-3.0.4-macOS.dmg` 与 `使用说明.txt` |
-| `lvguo-web-3.0.4-macos.tar.gz` | macOS Web 服务端 | 内含 Universal `lvguo-web` + `liblvguo_core.dylib` + `使用说明.txt` |
-| `lvguo-web-3.0.4-windows-x64.zip` / `x86.zip` | Windows Web 服务端 | 按 64/32 位区分，内含 `lvguo-web.exe` + `lvguo_core.dll` + `使用说明.txt` |
-| `LvguoPC-3.0.4-linux-{amd64,i386,arm64,armhf}.tar.gz` | Debian / Ubuntu 等桌面环境 | 内含对应架构 `.deb` 安装包与 `使用说明.txt` |
-| `lvguo-web-3.0.4-linux-{amd64,i386,arm64,armhf}.tar.gz` | Linux Web 服务端 | 内含 `lvguo-web` + `liblvguo_core.so` + `使用说明.txt`，支持 `systemd` |
+| `LvguoTV-3.0.5.zip` | Android 6.0+ 电视 / 投影仪 / 手机 | 内含 **64/32 位通用单包** `LvguoTV-3.0.5.apk`（`arm64-v8a` + `armeabi-v7a`）与 `使用说明.txt` |
+| `LvguoPC-3.0.5-win.zip` | Windows 64 位 / 32 位（Win7+） | 内含**统一安装程序** `LvguoPC-Setup-3.0.5-win.exe`（自动识别系统位数）与 `使用说明.txt` |
+| `LvguoPC-3.0.5-macOS.zip` | macOS（Apple Silicon M 系 + Intel） | 内含 **Universal 通用镜像** `LvguoPC-3.0.5-macOS.dmg` 与 `使用说明.txt` |
+| `lvguo-web-3.0.5-macos.tar.gz` | macOS Web 服务端 | 内含 Universal `lvguo-web` + `liblvguo_core.dylib` + `使用说明.txt` |
+| `lvguo-web-3.0.5-windows-x64.zip` / `x86.zip` | Windows Web 服务端 | 按 64/32 位区分，内含 `lvguo-web.exe` + `lvguo_core.dll` + `使用说明.txt` |
+| `LvguoPC-3.0.5-linux-{amd64,i386,arm64,armhf}.tar.gz` | Debian / Ubuntu 等桌面环境 | 内含对应架构 `.deb` 安装包与 `使用说明.txt` |
+| `lvguo-web-3.0.5-linux-{amd64,i386,arm64,armhf}.tar.gz` | Linux Web 服务端 | 内含 `lvguo-web` + `liblvguo_core.so` + `使用说明.txt`，支持 `systemd` |
 
 ### 命令行参数与环境变量
 
@@ -318,7 +318,7 @@ Android 应用只需将 `liblvguo_core.so` 置于对应 ABI 目录并通过 `ink
 
 ```bash
 # 示例：Linux 上快速启动并托管后台 Web 服务
-tar -xzf lvguo-web-3.0.4-linux-amd64.tar.gz
+tar -xzf lvguo-web-3.0.5-linux-amd64.tar.gz
 ./lvguo-web --listen 0.0.0.0:8780 --data-dir /var/lib/lvguo
 sudo ./lvguo-web service install --listen 0.0.0.0:8780
 ```
@@ -351,9 +351,9 @@ cargo build --workspace --release
 
 ```bash
 python3 hosts/android-tv/build_apk.py \
-  --version-name 3.0.4 \
+  --version-name 3.0.5 \
   --version-code 3000 \
-  --out dist/LvguoTV-3.0.4.apk
+  --out dist/LvguoTV-3.0.5.apk
 ```
 
 ---

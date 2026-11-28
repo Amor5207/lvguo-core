@@ -9,7 +9,7 @@ BIN_ARM64=""
 BIN_X64=""
 CORE_ARM64=""
 CORE_X64=""
-APP_VERSION="3.0.4"
+APP_VERSION="3.0.5"
 OUT_DIR=""
 
 while [[ $# -gt 0 ]]; do

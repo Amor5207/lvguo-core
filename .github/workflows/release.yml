@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: '可选：指定 Release Tag（客户端 v3.0.4 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
+        description: '可选：指定 Release Tag（客户端 v3.0.5 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
         required: false
         default: ''
 
@@ -43,8 +43,8 @@ jobs:
             EFFECTIVE_TAG="${{ inputs.release_tag }}"
           fi
 
-          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.4")')"
-          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3004")')"
+          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.5")')"
+          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3005")')"
           CORE_VER="$(python3 -c 'import re,pathlib; m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", pathlib.Path("core/Cargo.toml").read_text()); print(m.group(1) if m else "1.0.1")')"
 
           KIND="all"
@@ -604,9 +604,9 @@ jobs:
 
           ### 本次更新
 
-          - **会话隔离与安全**：Web 端按浏览器 Cookie 独立会话，账号数据互不可见；会话与本地历史落盘加密（AES-256-CTR + HMAC-SHA256），会话令牌加密且防伪造防篡改。
-          - **设置持久化**：界面设置改存 cookie（换端口/重启不丢），PC 使用稳定端口。
-          - **体验修复**：返回首页立即刷新「继续观看」；详情页未登录不再显示他人进度。
+          - **Core 更新修复**：修复重启后仍反复提示「重启生效」的问题——热更新已生效后不再误报。
+          - **版本显示**：设置-更新区与「关于」同时显示 App 版本、Core 版本与架构。
+          - **样式优化**：软件更新 / Core 更新的操作按钮改为更紧凑的小按钮，与设置页其他控件一致。
 
           > 为避免浏览器拦截裸安装包，全部交付产物均已打包为 \`.zip\` 或 \`.tar.gz\` 压缩包，内部均附带 \`使用说明.txt\`，解压后按说明安装或运行即可。
 
