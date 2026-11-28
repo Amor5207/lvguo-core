@@ -13,6 +13,7 @@ pub mod limiter;
 pub mod media_server;
 pub mod models;
 pub mod runtime;
+pub mod secret;
 pub mod sign;
 pub mod updater;
 pub mod upstream;

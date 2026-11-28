@@ -7,7 +7,7 @@
 <meta name="color-scheme" content="light dark">
 <title>播放 - 绿果</title>
 <link rel="icon" type="image/png" href="/shared/favicon.png">
-<script>try{var m=JSON.parse(localStorage.getItem('lvguo.settings')||'{}').theme||'auto';var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light')}catch(e){}</script>
+<script>try{var _p=('; '+document.cookie).split('; lvguo_settings=');var _s=_p.length===2?JSON.parse(decodeURIComponent(_p[1].split(';').shift())||'{}'):{};var m=_s.theme||'auto';var d=m==='dark'||(m==='auto'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.setAttribute('data-theme',d?'dark':'light')}catch(e){}</script>
 <link rel="stylesheet" href="/shared/tokens.css">
 <link rel="stylesheet" href="/pc/app.css">
 </head>

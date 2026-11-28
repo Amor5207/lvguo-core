@@ -100,9 +100,9 @@ impl Account {
         user: Arc<UserJar>,
     ) -> Arc<Self> {
         let lib_path = data_dir.join("library.json");
-        let lib_rows = std::fs::read_to_string(&lib_path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, LocalProgressRow>>(&s).ok())
+        // 历史/进度本地库加密落盘；旧明文读取后下次写入自动迁移。
+        let lib_rows = crate::secret::read(&lib_path)
+            .and_then(|b| serde_json::from_slice::<HashMap<String, LocalProgressRow>>(&b).ok())
             .unwrap_or_default();
         Arc::new(Self {
             http,
@@ -538,10 +538,10 @@ impl Account {
     }
 
     fn reload_lib_locked(&self, g: &mut HashMap<String, LocalProgressRow>) {
-        let Ok(s) = std::fs::read_to_string(&self.lib_path) else {
+        let Some(bytes) = crate::secret::read(&self.lib_path) else {
             return;
         };
-        let Ok(disk) = serde_json::from_str::<HashMap<String, LocalProgressRow>>(&s) else {
+        let Ok(disk) = serde_json::from_slice::<HashMap<String, LocalProgressRow>>(&bytes) else {
             return;
         };
         for (k, row) in disk {
@@ -565,14 +565,8 @@ impl Account {
     }
 
     fn save_lib_locked(&self, g: &HashMap<String, LocalProgressRow>) {
-        if let Some(parent) = self.lib_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string(g) {
-            let tmp = PathBuf::from(format!("{}.tmp", self.lib_path.to_string_lossy()));
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.lib_path);
-            }
+        if let Ok(json) = serde_json::to_vec(g) {
+            let _ = crate::secret::write(&self.lib_path, &json);
         }
     }
 

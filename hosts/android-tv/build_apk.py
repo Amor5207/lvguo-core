@@ -80,8 +80,8 @@ def main():
     repo = here.parent.parent
 
     parser = argparse.ArgumentParser(description="构建绿果 TV APK（支持全架构或分架构输出）")
-    parser.add_argument("--version-code", type=int, default=int(os.environ.get("LVGUO_VERSION_CODE", "3003")))
-    parser.add_argument("--version-name", default=os.environ.get("LVGUO_VERSION_NAME", "3.0.3"))
+    parser.add_argument("--version-code", type=int, default=int(os.environ.get("LVGUO_VERSION_CODE", "3004")))
+    parser.add_argument("--version-name", default=os.environ.get("LVGUO_VERSION_NAME", "3.0.4"))
     parser.add_argument("--abi", choices=("all", "arm64-v8a", "armeabi-v7a"), default=os.environ.get("LVGUO_APK_ABI", "all"))
     parser.add_argument("--arm64-so", default=os.environ.get("LVGUO_ARM64_SO", str(repo / "target/aarch64-linux-android/release/liblvguo_core.so")))
     parser.add_argument("--armv7-so", default=os.environ.get("LVGUO_ARMV7_SO", str(repo / "target/armv7-linux-androideabi/release/liblvguo_core.so")))

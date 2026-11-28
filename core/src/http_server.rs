@@ -17,6 +17,7 @@ use std::io::SeekFrom;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
+use uuid::Uuid;
 use tokio::sync::watch;
 use url::form_urlencoded;
 
@@ -74,16 +75,46 @@ struct HttpRequest {
     body: Vec<u8>,
 }
 
+async fn read_line_capped<R: tokio::io::AsyncBufRead + Unpin>(
+    reader: &mut R,
+    cap: usize,
+) -> Result<Option<String>, String> {
+    let mut out: Vec<u8> = Vec::new();
+    loop {
+        let buf = reader.fill_buf().await.map_err(|e| e.to_string())?;
+        if buf.is_empty() {
+            if out.is_empty() {
+                return Ok(None);
+            }
+            break;
+        }
+        if let Some(pos) = buf.iter().position(|&b| b == b'\n') {
+            if out.len() + pos > cap {
+                return Err("请求行或头部过长".into());
+            }
+            out.extend_from_slice(&buf[..pos]);
+            reader.consume(pos + 1);
+            break;
+        }
+        let l = buf.len();
+        if out.len() + l > cap {
+            return Err("请求行或头部过长".into());
+        }
+        out.extend_from_slice(buf);
+        reader.consume(l);
+    }
+    if out.last() == Some(&b'\r') {
+        out.pop();
+    }
+    Ok(Some(String::from_utf8_lossy(&out).into_owned()))
+}
+
 async fn read_request(stream: &mut TcpStream) -> Result<Option<HttpRequest>, String> {
     let mut reader = BufReader::new(stream);
-    let mut req_line = String::new();
-    let n = reader
-        .read_line(&mut req_line)
-        .await
-        .map_err(|e| e.to_string())?;
-    if n == 0 {
-        return Ok(None);
-    }
+    let req_line = match read_line_capped(&mut reader, 4096).await? {
+        Some(l) => l,
+        None => return Ok(None),
+    };
     let parts: Vec<&str> = req_line.split_whitespace().collect();
     if parts.len() < 2 {
         return Err("请求行无效".into());
@@ -95,13 +126,15 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<HttpRequest>, Str
     let mut headers = HashMap::new();
     let mut content_len: usize = 0;
     loop {
-        let mut line = String::new();
-        let read = reader
-            .read_line(&mut line)
-            .await
-            .map_err(|e| e.to_string())?;
-        if read == 0 || line == "\r\n" || line == "\n" {
+        let line = match read_line_capped(&mut reader, 8192).await? {
+            Some(l) => l,
+            None => break,
+        };
+        if line.is_empty() {
             break;
+        }
+        if headers.len() >= 128 {
+            return Err("请求头过多".into());
         }
         if let Some((k, v)) = line.split_once(':') {
             let key = k.trim().to_ascii_lowercase();
@@ -130,18 +163,65 @@ async fn read_request(stream: &mut TcpStream) -> Result<Option<HttpRequest>, Str
     }))
 }
 
+
+fn cookie_from_headers(headers: &HashMap<String, String>, name: &str) -> Option<String> {
+    let raw = headers.get("cookie")?;
+    for part in raw.split(';') {
+        if let Some((k, v)) = part.trim().split_once('=') {
+            if k.trim() == name {
+                return Some(v.trim().to_string());
+            }
+        }
+    }
+    None
+}
+
+fn valid_sid(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Web 宿主按浏览器 Cookie 隔离会话；首次访问下发 lvguo_sid，之后同一个浏览器复用。
+fn session_for(req: &HttpRequest, core: &AppCore) -> (String, String) {
+    if !core.session_isolation() {
+        return (String::new(), String::new());
+    }
+    // cookie 里是加密且带 MAC 的令牌：解密出 sid 才信，伪造/篡改一律当新会话。
+    if let Some(tok) = cookie_from_headers(&req.headers, "lvguo_sid") {
+        if let Some(bytes) = crate::secret::open_token(&core.data_dir, &tok) {
+            if let Ok(sid) = String::from_utf8(bytes) {
+                if valid_sid(&sid) {
+                    return (sid, String::new());
+                }
+            }
+        }
+    }
+    let sid = Uuid::new_v4().simple().to_string();
+    let tok = crate::secret::seal_token(&core.data_dir, sid.as_bytes());
+    // 生产在 https 反代后：加 Secure，避免 cookie 走明文回传。
+    let secure = req
+        .headers
+        .get("x-forwarded-proto")
+        .map(|v| v.eq_ignore_ascii_case("https"))
+        .unwrap_or(false);
+    let sec = if secure { "; Secure" } else { "" };
+    let hdr = format!("Set-Cookie: lvguo_sid={tok}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Lax{sec}\r\n");
+    (sid, hdr)
+}
+
 async fn serve_conn(mut stream: TcpStream, core: Arc<AppCore>) -> Result<(), String> {
     let req = match read_request(&mut stream).await {
         Ok(Some(r)) => r,
         Ok(None) => return Ok(()),
         Err(e) => {
-            write_json(&mut stream, 400, &json!({ "error": e })).await;
+            write_json(&mut stream, 400, &json!({ "error": e }), "").await;
             return Ok(());
         }
     };
 
+    let (sid, cookie_hdr) = session_for(&req, &core);
+
     if req.method == "OPTIONS" {
-        write_bytes(&mut stream, 204, "text/plain; charset=utf-8", b"", false).await;
+        write_bytes(&mut stream, 204, "text/plain; charset=utf-8", b"", false, &cookie_hdr).await;
         return Ok(());
     }
 
@@ -161,20 +241,21 @@ async fn serve_conn(mut stream: TcpStream, core: Arc<AppCore>) -> Result<(), Str
                 "abiVersion": CORE_ABI_VERSION,
                 "target": crate::config::current_target_id(),
             }),
+            &cookie_hdr,
         )
         .await;
         return Ok(());
     }
 
     if req.path == "/api/capabilities" {
-        write_json(&mut stream, 200, &serde_json::to_value(core.capabilities()).unwrap()).await;
+        write_json(&mut stream, 200, &serde_json::to_value(core.capabilities()).unwrap(), &cookie_hdr).await;
         return Ok(());
     }
 
     if req.path.starts_with("/api/") {
-        match handle_api(&req, &core).await {
-            Ok((status, val)) => write_json(&mut stream, status, &val).await,
-            Err((status, msg)) => write_json(&mut stream, status, &json!({ "error": msg })).await,
+        match handle_api(&req, &core, &sid).await {
+            Ok((status, val)) => write_json(&mut stream, status, &val, &cookie_hdr).await,
+            Err((status, msg)) => write_json(&mut stream, status, &json!({ "error": msg }), &cookie_hdr).await,
         }
         return Ok(());
     }
@@ -186,16 +267,16 @@ async fn serve_conn(mut stream: TcpStream, core: Arc<AppCore>) -> Result<(), Str
         p => p,
     };
     if let Some((mime, bytes)) = core.load_static_asset(asset_path) {
-        write_bytes(&mut stream, 200, mime, &bytes, req.method == "HEAD").await;
+        write_bytes(&mut stream, 200, mime, &bytes, req.method == "HEAD", &cookie_hdr).await;
         return Ok(());
     }
     if is_spa_route(&req.path) {
         if let Some((mime, bytes)) = core.load_static_asset("/pc/index.html") {
-            write_bytes(&mut stream, 200, mime, &bytes, req.method == "HEAD").await;
+            write_bytes(&mut stream, 200, mime, &bytes, req.method == "HEAD", &cookie_hdr).await;
             return Ok(());
         }
     }
-    write_json(&mut stream, 404, &json!({ "error": "Not Found" })).await;
+    write_json(&mut stream, 404, &json!({ "error": "Not Found" }), &cookie_hdr).await;
     Ok(())
 }
 
@@ -233,7 +314,7 @@ fn body_json(req: &HttpRequest) -> Value {
     serde_json::from_slice(&req.body).unwrap_or_else(|_| json!({}))
 }
 
-async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Value), (u16, String)> {
+async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>, sid: &str) -> Result<(u16, Value), (u16, String)> {
     let (q, q_all) = parse_query_map(&req.query);
     let qstr = |k: &str| q.get(k).cloned().unwrap_or_default();
     let qint = |k: &str| qstr(k).parse::<i64>().unwrap_or(0);
@@ -248,41 +329,41 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
                 return Err((400, "缺少 action".into()));
             }
             let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
-            let data = core.dispatch(&action, params).await.map_err(map_err)?;
+            let data = core.dispatch_session(sid, &action, params).await.map_err(map_err)?;
             Ok((200, json!({ "ok": true, "data": data })))
         }
 
         // ---------------- 账号与登录（可选，无强制门禁） ----------------
-        ("GET", "/api/me") => Ok((200, core.dispatch("me", json!({})).await.map_err(map_err)?)),
+        ("GET", "/api/me") => Ok((200, core.dispatch_session(sid, "me", json!({})).await.map_err(map_err)?)),
         ("POST", "/api/login/start") => {
-            Ok((200, core.dispatch("login.qr.start", json!({})).await.map_err(map_err)?))
+            Ok((200, core.dispatch_session(sid, "login.qr.start", json!({})).await.map_err(map_err)?))
         }
         ("GET", "/api/login/poll") => {
             let data = core
-                .dispatch("login.qr.poll", json!({ "token": qstr("token") }))
+                .dispatch_session(sid, "login.qr.poll", json!({ "token": qstr("token") }))
                 .await
                 .map_err(map_err)?;
             Ok((200, data))
         }
         ("POST", "/api/login/phone/send") => Ok((
             200,
-            core.dispatch("login.phone.send", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "login.phone.send", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/login/phone/login") => Ok((
             200,
-            core.dispatch("login.phone.login", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "login.phone.login", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/login/phone/verify") => Ok((
             200,
-            core.dispatch("login.phone.verify", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "login.phone.verify", body_json(req)).await.map_err(map_err)?,
         )),
-        ("POST", "/api/logout") => Ok((200, core.dispatch("logout", json!({})).await.map_err(map_err)?)),
+        ("POST", "/api/logout") => Ok((200, core.dispatch_session(sid, "logout", json!({})).await.map_err(map_err)?)),
 
         // ---------------- 浏览与推荐 ----------------
-        ("GET", "/api/home") => Ok((200, core.dispatch("home", json!({})).await.map_err(map_err)?)),
+        ("GET", "/api/home") => Ok((200, core.dispatch_session(sid, "home", json!({})).await.map_err(map_err)?)),
         ("GET", "/api/foryou") => Ok((
             200,
-            core.dispatch(
+            core.dispatch_session(sid, 
                 "foryou",
                 json!({
                     "channel": qstr("channel"),
@@ -296,7 +377,7 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         )),
         ("GET", "/api/rank") => Ok((
             200,
-            core.dispatch(
+            core.dispatch_session(sid, 
                 "rank",
                 json!({
                     "board": qstr("board"),
@@ -309,7 +390,7 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         )),
         ("GET", "/api/category/options") => Ok((
             200,
-            core.dispatch("category.options", json!({ "type": qstr("type") }))
+            core.dispatch_session(sid, "category.options", json!({ "type": qstr("type") }))
                 .await
                 .map_err(map_err)?,
         )),
@@ -324,7 +405,7 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
             }
             Ok((
                 200,
-                core.dispatch(
+                core.dispatch_session(sid, 
                     "category.list",
                     json!({
                         "type": qstr("type"),
@@ -340,7 +421,7 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         }
         ("GET", "/api/search") => Ok((
             200,
-            core.dispatch(
+            core.dispatch_session(sid, 
                 "search",
                 json!({ "q": qstr("q"), "page": qint("page").max(1) }),
             )
@@ -349,13 +430,13 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         )),
         ("GET", "/api/suggest") => Ok((
             200,
-            core.dispatch("suggest", json!({ "q": qstr("q") }))
+            core.dispatch_session(sid, "suggest", json!({ "q": qstr("q") }))
                 .await
                 .map_err(map_err)?,
         )),
         ("GET", "/api/detail") => Ok((
             200,
-            core.dispatch(
+            core.dispatch_session(sid, 
                 "detail",
                 json!({ "id": qstr("id"), "lite": qstr("lite") == "1" }),
             )
@@ -364,7 +445,8 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         )),
         ("GET", "/api/seasons") => {
             let res = core
-                .dispatch(
+                .dispatch_session(
+                    sid,
                     "seasons",
                     json!({ "id": qstr("id"), "quick": qstr("quick") == "1" }),
                 )
@@ -378,7 +460,8 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
                 if e.is_empty() { qstr("vid") } else { e }
             };
             let raw = core
-                .dispatch(
+                .dispatch_session(
+                    sid,
                     "comments",
                     json!({ "id": qstr("id"), "vid": vid, "offset": qint("offset") }),
                 )
@@ -440,60 +523,57 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         ("GET", "/api/history") => {
             let limit = qint("limit");
             let params = if limit > 0 { json!({ "limit": limit }) } else { json!({ "limit": 120 }) };
-            Ok((200, core.dispatch("history.list", params).await.map_err(map_err)?))
+            Ok((200, core.dispatch_session(sid, "history.list", params).await.map_err(map_err)?))
         }
         ("POST", "/api/history/delete") => {
             let b = body_json(req);
-            let sid = b["seriesId"]
+            let series = b["seriesId"]
                 .as_str()
                 .or_else(|| b["id"].as_str())
                 .unwrap_or("")
                 .to_string();
             Ok((
                 200,
-                core.dispatch("history.delete", json!({ "seriesId": sid }))
+                core.dispatch_session(sid, "history.delete", json!({ "seriesId": series }))
                     .await
                     .map_err(map_err)?,
             ))
         }
         ("GET", "/api/favorites") => Ok((
             200,
-            core.dispatch("favorites.list", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "favorites.list", json!({})).await.map_err(map_err)?,
         )),
         ("POST", "/api/favorite") => {
             let b = body_json(req);
-            let sid = b["seriesId"]
+            let series = b["seriesId"]
                 .as_str()
                 .or_else(|| b["id"].as_str())
                 .unwrap_or("")
                 .to_string();
             let add = b["add"].as_bool().unwrap_or(true);
-            core.dispatch("favorite.set", json!({ "seriesId": sid, "add": add }))
+            core.dispatch_session(sid, "favorite.set", json!({ "seriesId": series, "add": add }))
                 .await
                 .map_err(map_err)?;
             Ok((200, json!({ "ok": true, "favorite": add })))
         }
         ("GET", "/api/reservations") => {
-            if !core.user.logged_in() {
-                return Ok((200, json!({ "online": [], "upcoming": [] })));
-            }
             let (on_res, off_res) = tokio::join!(
-                core.account.reservations(true),
-                core.account.reservations(false)
+                core.dispatch_session(sid, "reservations.list", json!({ "online": true })),
+                core.dispatch_session(sid, "reservations.list", json!({ "online": false }))
             );
-            let online = on_res.unwrap_or_default();
-            let upcoming = off_res.unwrap_or_default();
+            let online = on_res.map(|v| v["items"].clone()).unwrap_or_else(|_| json!([]));
+            let upcoming = off_res.map(|v| v["items"].clone()).unwrap_or_else(|_| json!([]));
             Ok((200, json!({ "online": online, "upcoming": upcoming })))
         }
         ("POST", "/api/reservation") => {
             let b = body_json(req);
-            let sid = b["seriesId"]
+            let series = b["seriesId"]
                 .as_str()
                 .or_else(|| b["id"].as_str())
                 .unwrap_or("")
                 .to_string();
             let add = b["add"].as_bool().unwrap_or(true);
-            core.dispatch("reservation.set", json!({ "seriesId": sid, "add": add }))
+            core.dispatch_session(sid, "reservation.set", json!({ "seriesId": series, "add": add }))
                 .await
                 .map_err(map_err)?;
             Ok((200, json!({ "ok": true, "reserved": add })))
@@ -512,54 +592,54 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
             }
             Ok((
                 200,
-                core.dispatch("progress.report", b).await.map_err(map_err)?,
+                core.dispatch_session(sid, "progress.report", b).await.map_err(map_err)?,
             ))
         }
 
         // ---------------- PC 离线下载、原生播放与单文件 Core 热更新 ----------------
         ("GET", "/api/download/list") => Ok((
             200,
-            core.dispatch("download.list", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.list", json!({})).await.map_err(map_err)?,
         )),
         ("GET", "/api/download/summary") => Ok((
             200,
-            core.dispatch("download.summary", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.summary", json!({})).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/add") => Ok((
             200,
-            core.dispatch("download.add", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.add", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/add-batch") => Ok((
             200,
-            core.dispatch("download.add_batch", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.add_batch", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/delete-batch") => Ok((
             200,
-            core.dispatch("download.delete_batch", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.delete_batch", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/action") => Ok((
             200,
-            core.dispatch("download.action", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.action", body_json(req)).await.map_err(map_err)?,
         )),
         ("GET", "/api/download/settings") => Ok((
             200,
-            core.dispatch("download.settings.get", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.settings.get", json!({})).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/settings") => Ok((
             200,
-            core.dispatch("download.settings.set", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.settings.set", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/download/open") => Ok((
             200,
-            core.dispatch("download.open", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "download.open", body_json(req)).await.map_err(map_err)?,
         )),
         ("GET", "/api/core/update") => Ok((
             200,
-            core.dispatch("core.update.status", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "core.update.status", json!({})).await.map_err(map_err)?,
         )),
         ("POST", "/api/core/update/check") => Ok((
             200,
-            core.dispatch("core.update.check", body_json(req)).await.map_err(map_err)?,
+            core.dispatch_session(sid, "core.update.check", body_json(req)).await.map_err(map_err)?,
         )),
         ("POST", "/api/core/update/channel") => {
             let b = body_json(req);
@@ -576,11 +656,11 @@ async fn handle_api(req: &HttpRequest, core: &Arc<AppCore>) -> Result<(u16, Valu
         }
         ("POST", "/api/core/update/rollback") => Ok((
             200,
-            core.dispatch("core.update.rollback", json!({})).await.map_err(map_err)?,
+            core.dispatch_session(sid, "core.update.rollback", json!({})).await.map_err(map_err)?,
         )),
         ("GET", "/api/app/update/check") => Ok((
             200,
-            core.dispatch("app.update.check", json!({ "appVersion": qstr("version") }))
+            core.dispatch_session(sid, "app.update.check", json!({ "appVersion": qstr("version") }))
                 .await
                 .map_err(map_err)?,
         )),
@@ -605,13 +685,13 @@ fn map_err(msg: String) -> (u16, String) {
 
 async fn handle_media(stream: &mut TcpStream, req: &HttpRequest, core: &Arc<AppCore>) {
     if req.method != "GET" && req.method != "HEAD" {
-        write_json(stream, 405, &json!({ "error": "Method Not Allowed" })).await;
+        write_json(stream, 405, &json!({ "error": "Method Not Allowed" }), "").await;
         return;
     }
     let rest = req.path.strip_prefix("/media/").unwrap_or("");
     let vid = rest.strip_suffix(".mp4").unwrap_or(rest);
     if vid.is_empty() || !vid.bytes().all(|b| b.is_ascii_digit()) {
-        write_json(stream, 404, &json!({ "error": "Invalid vid" })).await;
+        write_json(stream, 404, &json!({ "error": "Invalid vid" }), "").await;
         return;
     }
     let range_hdr = req.headers.get("range").map(|s| s.as_str());
@@ -631,7 +711,7 @@ async fn handle_media(stream: &mut TcpStream, req: &HttpRequest, core: &Arc<AppC
         .stream_range(vid, q_pref, range_hdr, is_head, stream)
         .await
     {
-        write_json(stream, 502, &json!({ "error": e })).await;
+        write_json(stream, 502, &json!({ "error": e }), "").await;
     }
 }
 
@@ -703,9 +783,9 @@ async fn stream_local_file(
     Ok(())
 }
 
-async fn write_json(stream: &mut TcpStream, status: u16, val: &Value) {
+async fn write_json(stream: &mut TcpStream, status: u16, val: &Value, extra: &str) {
     let bytes = serde_json::to_vec(val).unwrap_or_else(|_| b"{}".to_vec());
-    write_bytes(stream, status, "application/json; charset=utf-8", &bytes, false).await;
+    write_bytes(stream, status, "application/json; charset=utf-8", &bytes, false, extra).await;
 }
 
 async fn write_bytes(
@@ -714,6 +794,7 @@ async fn write_bytes(
     mime: &str,
     bytes: &[u8],
     head_only: bool,
+    extra: &str,
 ) {
     let reason = match status {
         200 => "OK",
@@ -725,7 +806,7 @@ async fn write_bytes(
         _ => "Bad Gateway",
     };
     let hdr = format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: {mime}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nX-Content-Type-Options: nosniff\r\nReferrer-Policy: no-referrer\r\n{extra}Connection: close\r\n\r\n",
         bytes.len()
     );
     let _ = stream.write_all(hdr.as_bytes()).await;

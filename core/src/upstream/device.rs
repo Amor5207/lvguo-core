@@ -579,9 +579,9 @@ pub struct UserJar {
 impl UserJar {
     pub fn new(data_dir: &Path) -> Self {
         let path = data_dir.join("session.json");
-        let jar = std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str::<HashMap<String, String>>(&s).ok())
+        // 登录态（上游 cookie）落盘加密；旧明文会在下次写入时自动迁移。
+        let jar = crate::secret::read(&path)
+            .and_then(|b| serde_json::from_slice::<HashMap<String, String>>(&b).ok())
             .unwrap_or_default();
         Self {
             path,
@@ -663,14 +663,8 @@ impl UserJar {
     }
 
     fn save_locked(&self, g: &HashMap<String, String>) {
-        if let Some(parent) = self.path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(g) {
-            let tmp = PathBuf::from(format!("{}.tmp", self.path.to_string_lossy()));
-            if std::fs::write(&tmp, json).is_ok() {
-                let _ = std::fs::rename(&tmp, &self.path);
-            }
+        if let Ok(json) = serde_json::to_vec(g) {
+            let _ = crate::secret::write(&self.path, &json);
         }
     }
 }

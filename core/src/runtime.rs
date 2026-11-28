@@ -20,6 +20,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
@@ -36,6 +37,8 @@ pub struct AppCore {
     pub http: Client,
     pub devices: Arc<DeviceStore>,
     pub user: Arc<UserJar>,
+    isolate_sessions: bool,
+    sessions: Mutex<HashMap<String, (Arc<Account>, Instant)>>,
     pub updater: Arc<CoreUpdater>,
     pub account: Arc<Account>,
     pub content: Arc<Content>,
@@ -49,8 +52,10 @@ pub struct AppCore {
     http_stop_tx: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
     app_version: String,
     app_update_url: String,
-    qr_sessions: tokio::sync::Mutex<HashMap<String, QrSession>>,
-    phone_sessions: tokio::sync::Mutex<HashMap<String, PhoneLogin>>,
+    /// token -> (所属会话 sid, 扫码会话)。PC/TV 的 sid 为空串。
+    qr_sessions: tokio::sync::Mutex<HashMap<String, (String, QrSession)>>,
+    /// 登录临时 id -> (所属会话 sid, 手机号登录流程)。
+    phone_sessions: tokio::sync::Mutex<HashMap<String, (String, PhoneLogin)>>,
     last_heartbeat_at: Mutex<i64>,
 }
 
@@ -58,6 +63,60 @@ static CORE: OnceCell<Mutex<Option<Arc<AppCore>>>> = OnceCell::new();
 
 fn core_slot() -> &'static Mutex<Option<Arc<AppCore>>> {
     CORE.get_or_init(|| Mutex::new(None))
+}
+
+static LAST_PRUNE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+static SPAWNED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+const MAX_SESSION_DIRS: usize = 2000;
+
+/// 清理长期不活跃的 Web 会话目录，并对目录总数设硬上限，防止无 cookie 洪泛写满磁盘。
+fn maybe_prune_sessions(root: &std::path::Path) {
+    use std::sync::atomic::Ordering;
+    let n = SPAWNED.fetch_add(1, Ordering::Relaxed) + 1;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let due_time = now - LAST_PRUNE.load(Ordering::Relaxed) >= 3600;
+    // 每小时例行清理；另外每新建 32 个会话强制检查一次容量。
+    if !(due_time || n.is_multiple_of(32)) {
+        return;
+    }
+    if due_time {
+        LAST_PRUNE.store(now, Ordering::Relaxed);
+    }
+    let Ok(rd) = std::fs::read_dir(root.join("sessions")) else {
+        return;
+    };
+    let mut dirs: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
+    for ent in rd.flatten() {
+        let p = ent.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let name = ent.file_name();
+        let s = name.to_string_lossy();
+        if !(s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())) {
+            continue;
+        }
+        let mt = std::fs::metadata(&p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if let Ok(age) = mt.elapsed() {
+            if age.as_secs() > 30 * 86400 {
+                let _ = std::fs::remove_dir_all(&p);
+                continue;
+            }
+        }
+        dirs.push((p, mt));
+    }
+    if dirs.len() > MAX_SESSION_DIRS {
+        dirs.sort_by_key(|(_, t)| *t);
+        let extra = dirs.len() - MAX_SESSION_DIRS;
+        for (p, _) in dirs.into_iter().take(extra) {
+            let _ = std::fs::remove_dir_all(&p);
+        }
+    }
 }
 
 /// 获取当前已初始化的核心实例。
@@ -110,6 +169,18 @@ pub fn init_core(cfg: CoreInitConfig) -> Result<Arc<AppCore>, String> {
         .map_err(|e| format!("启动核心异步运行时失败: {e}"))?;
 
     let http = build_http_client(30);
+    let isolate_sessions = cfg.host_kind == "web";
+    // Web 多会话隔离：把旧版根目录里的共享登录态/历史迁走，避免全局账号继续读到别人的数据。
+    if isolate_sessions {
+        let legacy = data_dir.join("sessions").join("legacy");
+        for name in ["session.json", "library.json"] {
+            let p = data_dir.join(name);
+            if p.exists() {
+                let _ = std::fs::create_dir_all(&legacy);
+                let _ = std::fs::rename(&p, legacy.join(name));
+            }
+        }
+    }
     let devices = Arc::new(DeviceStore::new(&data_dir, http.clone()));
     let user = Arc::new(UserJar::new(&data_dir));
     let updater = CoreUpdater::new(&data_dir, http.clone(), cfg.update_mode, &cfg.custom_update_url);
@@ -142,6 +213,8 @@ pub fn init_core(cfg: CoreInitConfig) -> Result<Arc<AppCore>, String> {
         http,
         devices,
         user,
+        isolate_sessions,
+        sessions: Mutex::new(HashMap::new()),
         updater,
         account,
         content,
@@ -190,6 +263,10 @@ pub fn shutdown_core() {
         c.media_server.shutdown();
         c.downloader.shutdown();
     }
+}
+
+fn cookie_of(user: &UserJar) -> String {
+    if user.logged_in() { user.cookie_string() } else { String::new() }
 }
 
 impl AppCore {
@@ -295,16 +372,65 @@ impl AppCore {
         Ok(addr)
     }
 
-    fn cookie(&self) -> String {
-        if self.user.logged_in() {
-            self.user.cookie_string()
-        } else {
-            String::new()
+
+
+    pub fn session_isolation(&self) -> bool {
+        self.isolate_sessions
+    }
+
+    /// 按会话取账号通道：Web 每个浏览器 Cookie 一份独立登录态与本地历史；PC/TV 走默认单账号。
+    fn session_account(&self, sid: &str) -> Arc<Account> {
+        if !self.isolate_sessions || sid.is_empty() {
+            return self.account.clone();
         }
+        let mut map = self.sessions.lock().unwrap();
+        if let Some((a, at)) = map.get_mut(sid) {
+            *at = Instant::now();
+            return a.clone();
+        }
+        let dir = self.data_dir.join("sessions").join(sid);
+        let _ = std::fs::create_dir_all(&dir);
+        maybe_prune_sessions(&self.data_dir);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        }
+        let user = Arc::new(UserJar::new(&dir));
+        let acct = Account::new(&dir, self.http.clone(), self.devices.clone(), user);
+        if map.len() >= 128 {
+            if let Some(k) = map.iter().min_by_key(|(_, (_, t))| *t).map(|(k, _)| k.clone()) {
+                map.remove(&k);
+            }
+        }
+        map.insert(sid.to_string(), (acct.clone(), Instant::now()));
+        acct
     }
 
     /// 统一异步业务分发入口，供 C-ABI / Android JNI / HTTP 路由器共同调用。
     pub async fn dispatch(self: &Arc<Self>, action: &str, params: Value) -> Result<Value, String> {
+        let acct = self.account.clone();
+        self.dispatch_with(&acct, "", action, params).await
+    }
+
+    /// 带会话的分发入口（HTTP Web 宿主使用）；sid 为空或未开启隔离时等价于默认账号。
+    pub async fn dispatch_session(
+        self: &Arc<Self>,
+        sid: &str,
+        action: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let acct = self.session_account(sid);
+        self.dispatch_with(&acct, sid, action, params).await
+    }
+
+    async fn dispatch_with(
+        self: &Arc<Self>,
+        acct: &Arc<Account>,
+        sid: &str,
+        action: &str,
+        params: Value,
+    ) -> Result<Value, String> {
         match action {
             // ---------------- 基础信息与能力 ----------------
             "core.info" => Ok(json!({
@@ -313,40 +439,40 @@ impl AppCore {
                 "target": crate::config::current_target_id(),
                 "appVersion": self.app_version,
                 "mediaBaseUrl": self.media_server.base_url(),
-                "dataDir": self.data_dir.to_string_lossy(),
+                "dataDir": if self.isolate_sessions { String::new() } else { self.data_dir.to_string_lossy().into_owned() },
                 "capabilities": self.capabilities(),
             })),
 
             // ---------------- 账号与可选同步（无强制登录门槛） ----------------
-            "me" => self.act_me().await,
-            "login.qr.start" => self.act_qr_start().await,
-            "login.qr.poll" => self.act_qr_poll(&params).await,
-            "login.phone.send" => self.act_phone_send(&params).await,
-            "login.phone.login" => self.act_phone_login(&params).await,
-            "login.phone.verify" => self.act_phone_verify(&params).await,
-            "logout" => self.act_logout().await,
+            "me" => self.act_me(acct).await,
+            "login.qr.start" => self.act_qr_start(sid).await,
+            "login.qr.poll" => self.act_qr_poll(acct, sid, &params).await,
+            "login.phone.send" => self.act_phone_send(sid, &params).await,
+            "login.phone.login" => self.act_phone_login(acct, sid, &params).await,
+            "login.phone.verify" => self.act_phone_verify(acct, sid, &params).await,
+            "logout" => self.act_logout(acct).await,
 
             // ---------------- 内容浏览、解析与弹幕 ----------------
-            "home" => self.act_home().await,
-            "foryou" => self.act_for_you(&params).await,
-            "rank" => self.act_rank(&params).await,
-            "category.options" => self.act_category_options(&params).await,
-            "category.list" => self.act_category_list(&params).await,
-            "search" => self.act_search(&params).await,
-            "suggest" => self.act_suggest(&params).await,
-            "detail" => self.act_detail(&params).await,
-            "seasons" => self.act_seasons(&params).await,
-            "comments" => self.act_comments(&params).await,
+            "home" => self.act_home(acct).await,
+            "foryou" => self.act_for_you(acct, &params).await,
+            "rank" => self.act_rank(acct, &params).await,
+            "category.options" => self.act_category_options(acct, &params).await,
+            "category.list" => self.act_category_list(acct, &params).await,
+            "search" => self.act_search(acct, &params).await,
+            "suggest" => self.act_suggest(acct, &params).await,
+            "detail" => self.act_detail(acct, &params).await,
+            "seasons" => self.act_seasons(acct, &params).await,
+            "comments" => self.act_comments(acct, &params).await,
             "play" => self.act_play(&params).await,
 
             // ---------------- 历史 / 收藏 / 预约 / 进度 ----------------
-            "history.list" => self.act_history_list(&params).await,
-            "history.delete" => self.act_history_delete(&params).await,
-            "favorites.list" => self.act_favorites_list().await,
-            "favorite.set" => self.act_favorite_set(&params).await,
-            "reservations.list" => self.act_reservations_list(&params).await,
-            "reservation.set" => self.act_reservation_set(&params).await,
-            "progress.report" => self.act_progress_report(&params).await,
+            "history.list" => self.act_history_list(acct, &params).await,
+            "history.delete" => self.act_history_delete(acct, &params).await,
+            "favorites.list" => self.act_favorites_list(acct).await,
+            "favorite.set" => self.act_favorite_set(acct, &params).await,
+            "reservations.list" => self.act_reservations_list(acct, &params).await,
+            "reservation.set" => self.act_reservation_set(acct, &params).await,
+            "progress.report" => self.act_progress_report(acct, &params).await,
 
             // ---------------- 多线程离线下载 ----------------
             "download.list" => self.act_download_list(),
@@ -400,11 +526,11 @@ impl AppCore {
         }
     }
 
-    async fn act_me(self: &Arc<Self>) -> Result<Value, String> {
-        if !self.user.logged_in() {
+    async fn act_me(self: &Arc<Self>, acct: &Arc<Account>) -> Result<Value, String> {
+        if !acct.user.logged_in() {
             return Ok(json!({ "loggedIn": false }));
         }
-        let profile = self.account.profile().await?;
+        let profile = acct.profile().await?;
         let now = now_secs();
         let need_hb = {
             let mut last = self.last_heartbeat_at.lock().unwrap();
@@ -416,7 +542,7 @@ impl AppCore {
             }
         };
         if need_hb {
-            let acct = self.account.clone();
+            let acct = acct.clone();
             self.rt.spawn(async move {
                 let _ = acct.heartbeat().await;
             });
@@ -424,19 +550,23 @@ impl AppCore {
         Ok(json!({
             "loggedIn": true,
             "profile": profile,
-            "daysLeft": self.user.days_left(),
+            "daysLeft": acct.user.days_left(),
         }))
     }
 
-    async fn act_qr_start(&self) -> Result<Value, String> {
+    async fn act_qr_start(&self, owner: &str) -> Result<Value, String> {
         let (sess, res) = QrSession::start().await?;
         let token = sess.token().to_string();
         let data_url = res.qr;
         let mut map = self.qr_sessions.lock().await;
-        if map.len() > 8 {
-            map.clear();
+        // 每个会话只保留一个待扫码登录，避免别人的二维码被本会话轮询到
+        map.retain(|_, (o, _)| o != owner);
+        if map.len() >= 64 {
+            if let Some(k) = map.keys().next().cloned() {
+                map.remove(&k);
+            }
         }
-        map.insert(token.clone(), sess);
+        map.insert(token.clone(), (owner.to_string(), sess));
         Ok(json!({
             "token": token,
             "qr": data_url,
@@ -445,87 +575,116 @@ impl AppCore {
         }))
     }
 
-    async fn act_qr_poll(&self, params: &Value) -> Result<Value, String> {
+    async fn act_qr_poll(
+        &self,
+        acct: &Arc<Account>,
+        owner: &str,
+        params: &Value,
+    ) -> Result<Value, String> {
         let token = pstr(params, "token");
         let mut map = self.qr_sessions.lock().await;
-        let sess = if token.is_empty() {
-            map.values_mut().next()
+        // 只允许轮询本会话自己发起的二维码；不带 token 时也只找本会话的
+        let key = if token.is_empty() {
+            map.iter()
+                .find(|(_, (o, _))| o == owner)
+                .map(|(k, _)| k.clone())
         } else {
-            map.get_mut(&token)
+            match map.get(&token) {
+                Some((o, _)) if o == owner => Some(token),
+                _ => None,
+            }
         };
-        let Some(sess) = sess else {
+        let Some(key) = key else {
+            return Ok(json!({ "state": "expired" }));
+        };
+        let Some((_, sess)) = map.get_mut(&key) else {
             return Ok(json!({ "state": "expired" }));
         };
         let (state, jar) = sess.poll().await?;
         if state == "confirmed" {
             if let Some(cookies) = jar {
-                self.user.set(cookies);
-                self.account.flush_dirty_progress().await;
+                acct.user.set(cookies);
+                acct.flush_dirty_progress().await;
             }
-            if !token.is_empty() {
-                map.remove(&token);
-            } else {
-                map.clear();
-            }
+            map.retain(|_, (o, _)| o != owner);
         }
         Ok(json!({ "state": state }))
     }
 
-    async fn act_phone_send(&self, params: &Value) -> Result<Value, String> {
+    async fn act_phone_send(&self, owner: &str, params: &Value) -> Result<Value, String> {
         let phone = pstr(params, "phone");
         let existing_id = pstr(params, "sessionId");
         let mut map = self.phone_sessions.lock().await;
-        let sid = if !existing_id.is_empty() && map.contains_key(&existing_id) {
+        let owned = |m: &HashMap<String, (String, PhoneLogin)>, id: &str| {
+            m.get(id).map(|(o, _)| o == owner).unwrap_or(false)
+        };
+        let sid = if !existing_id.is_empty() && owned(&map, &existing_id) {
             existing_id
         } else {
             let new_id = Uuid::new_v4().simple().to_string();
             let sess = PhoneLogin::new().await?;
-            if map.len() > 8 {
-                map.clear();
+            map.retain(|_, (o, _)| o != owner);
+            if map.len() >= 32 {
+                if let Some(k) = map.keys().next().cloned() {
+                    map.remove(&k);
+                }
             }
-            map.insert(new_id.clone(), sess);
+            map.insert(new_id.clone(), (owner.to_string(), sess));
             new_id
         };
-        let sess = map.get_mut(&sid).unwrap();
+        let sess = &mut map.get_mut(&sid).unwrap().1;
         sess.send_code(&phone).await?;
         Ok(json!({ "sessionId": sid }))
     }
 
-    async fn act_phone_login(&self, params: &Value) -> Result<Value, String> {
+    async fn act_phone_login(
+        &self,
+        acct: &Arc<Account>,
+        owner: &str,
+        params: &Value,
+    ) -> Result<Value, String> {
         let sid = pstr(params, "sessionId");
         let code = pstr(params, "code");
         let outcome = {
             let mut map = self.phone_sessions.lock().await;
-            let sess = map
-                .get_mut(&sid)
-                .ok_or_else(|| "验证会话不存在或已过期，请重新发送验证码".to_string())?;
+            let sess = match map.get_mut(&sid) {
+                Some((o, s)) if o == owner => s,
+                _ => return Err("验证会话不存在或已过期，请重新发送验证码".to_string()),
+            };
             sess.login(&code).await?
         };
-        self.finish_phone_outcome(&sid, outcome).await
+        self.finish_phone_outcome(acct, &sid, outcome).await
     }
 
-    async fn act_phone_verify(&self, params: &Value) -> Result<Value, String> {
+    async fn act_phone_verify(
+        &self,
+        acct: &Arc<Account>,
+        owner: &str,
+        params: &Value,
+    ) -> Result<Value, String> {
         let sid = pstr(params, "sessionId");
         let outcome = {
             let mut map = self.phone_sessions.lock().await;
-            let sess = map
-                .get_mut(&sid)
-                .ok_or_else(|| "验证会话不存在或已过期".to_string())?;
+            let sess = match map.get_mut(&sid) {
+                Some((o, s)) if o == owner => s,
+                _ => return Err("验证会话不存在或已过期".to_string()),
+            };
             sess.verify_mfa().await?
         };
-        self.finish_phone_outcome(&sid, outcome).await
+        self.finish_phone_outcome(acct, &sid, outcome).await
     }
 
     async fn finish_phone_outcome(
         &self,
+        acct: &Arc<Account>,
         sid: &str,
         outcome: PhoneLoginOutcome,
     ) -> Result<Value, String> {
         match outcome {
             PhoneLoginOutcome::Ok { cookies, device } => {
                 self.devices.adopt(device).await;
-                self.user.set(cookies);
-                self.account.flush_dirty_progress().await;
+                acct.user.set(cookies);
+                acct.flush_dirty_progress().await;
                 self.phone_sessions.lock().await.remove(sid);
                 Ok(json!({ "status": "ok" }))
             }
@@ -538,30 +697,30 @@ impl AppCore {
         }
     }
 
-    async fn act_logout(&self) -> Result<Value, String> {
-        if self.user.logged_in() {
-            self.account.flush_dirty_progress().await;
-            self.account.logout_remote().await;
+    async fn act_logout(&self, acct: &Arc<Account>) -> Result<Value, String> {
+        if acct.user.logged_in() {
+            acct.flush_dirty_progress().await;
+            acct.logout_remote().await;
         }
-        self.user.clear();
-        self.account.clear_local_library();
+        acct.user.clear();
+        acct.clear_local_library();
         Ok(json!({ "ok": true }))
     }
 
-    async fn act_home(&self) -> Result<Value, String> {
-        let logged = self.user.logged_in();
+    async fn act_home(&self, acct: &Arc<Account>) -> Result<Value, String> {
+        let logged = acct.user.logged_in();
         let (hist_res, channels, fy_res) = tokio::join!(
             async {
                 if logged {
-                    self.account.cloud_history(12).await
+                    acct.cloud_history(12).await
                 } else {
-                    Ok(self.account.local_history(12))
+                    Ok(acct.local_history(12))
                 }
             },
-            self.content.feed_channels(&self.account),
-            self.content.for_you(&self.account, "16", 0, "", "")
+            self.content.feed_channels(acct),
+            self.content.for_you(acct, "16", 0, "", "")
         );
-        let cont = hist_res.unwrap_or_else(|_| self.account.local_history(12));
+        let cont = hist_res.unwrap_or_else(|_| acct.local_history(12));
         let (page, cell, sess) = fy_res?;
         Ok(json!({
             "continue": cont,
@@ -572,14 +731,14 @@ impl AppCore {
         }))
     }
 
-    async fn act_for_you(&self, params: &Value) -> Result<Value, String> {
+    async fn act_for_you(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let ch = pstr(params, "channel");
         let offset = params["offset"].as_i64().unwrap_or(0) as i32;
         let cell = pstr(params, "cell");
         let session = pstr(params, "session");
         let (page, next_cell, next_sess) = self
             .content
-            .for_you(&self.account, &ch, offset, &cell, &session)
+            .for_you(acct, &ch, offset, &cell, &session)
             .await?;
         Ok(json!({
             "page": page,
@@ -588,27 +747,27 @@ impl AppCore {
         }))
     }
 
-    async fn act_rank(&self, params: &Value) -> Result<Value, String> {
+    async fn act_rank(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let board = pstr(params, "board");
         let offset = params["offset"].as_i64().unwrap_or(0) as i32;
         let session = pstr(params, "session");
         let page = self
             .content
-            .rank(&self.cookie(), &board, offset, &session)
+            .rank(&cookie_of(&acct.user), &board, offset, &session)
             .await?;
         Ok(serde_json::to_value(page).unwrap())
     }
 
-    async fn act_category_options(&self, params: &Value) -> Result<Value, String> {
+    async fn act_category_options(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let typ = pstr(params, "type");
         let opts = self
             .content
-            .category_options(&self.cookie(), &typ)
+            .category_options(&cookie_of(&acct.user), &typ)
             .await?;
         Ok(serde_json::to_value(opts).unwrap())
     }
 
-    async fn act_category_list(&self, params: &Value) -> Result<Value, String> {
+    async fn act_category_list(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let typ = pstr(params, "type");
         let board = pstr(params, "board");
         let offset = params["offset"].as_i64().unwrap_or(0) as i32;
@@ -623,28 +782,28 @@ impl AppCore {
         }
         let page = self
             .content
-            .category_page(&self.cookie(), &typ, &board, &selected, offset, &session)
+            .category_page(&cookie_of(&acct.user), &typ, &board, &selected, offset, &session)
             .await?;
         Ok(serde_json::to_value(page).unwrap())
     }
 
-    async fn act_search(&self, params: &Value) -> Result<Value, String> {
+    async fn act_search(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let q = pstr(params, "q");
         let page = params["page"].as_i64().unwrap_or(1) as i32;
-        let res = self.content.search(&self.account, &q, page).await?;
+        let res = self.content.search(acct, &q, page).await?;
         Ok(serde_json::to_value(res).unwrap())
     }
 
-    async fn act_suggest(&self, params: &Value) -> Result<Value, String> {
+    async fn act_suggest(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let q = pstr(params, "q");
-        let items = self.content.suggest(&self.account, &q).await;
+        let items = self.content.suggest(acct, &q).await;
         Ok(json!({ "items": items }))
     }
 
-    async fn act_detail(&self, params: &Value) -> Result<Value, String> {
+    async fn act_detail(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let id = pstr(params, "id");
         let lite = params["lite"].as_bool().unwrap_or(false);
-        let cookie = self.cookie();
+        let cookie = cookie_of(&acct.user);
         let detail = self.content.detail(&cookie, &id).await?;
         // 详情页加载完成后立即后台预热第 1 集首片与 CENC 索引，实现点击播放秒开
         if let Some(ep0) = detail.episodes.first() {
@@ -656,9 +815,9 @@ impl AppCore {
         let mut out = json!({ "detail": detail });
 
         if !lite {
-            if self.user.logged_in() {
+            if acct.user.logged_in() {
                 let (favs_res, hist_res) =
-                    tokio::join!(self.account.favorites(), self.account.cloud_history(200));
+                    tokio::join!(acct.favorites(), acct.cloud_history(200));
                 if let Ok(favs) = favs_res {
                     if favs.iter().any(|f| f.series_id == id) {
                         out["favorite"] = json!(true);
@@ -671,8 +830,8 @@ impl AppCore {
                 }
                 if detail.episodes.is_empty() {
                     let (r0, r1) = tokio::join!(
-                        self.account.reservations(false),
-                        self.account.reservations(true)
+                        acct.reservations(false),
+                        acct.reservations(true)
                     );
                     let found = r0
                         .ok()
@@ -686,8 +845,7 @@ impl AppCore {
                         out["reservation"] = serde_json::to_value(rv).unwrap();
                     }
                 }
-            } else if let Some(p) = self
-                .account
+            } else if let Some(p) = acct
                 .local_history(200)
                 .into_iter()
                 .find(|h| h.series_id == id)
@@ -698,18 +856,18 @@ impl AppCore {
         Ok(out)
     }
 
-    async fn act_seasons(&self, params: &Value) -> Result<Value, String> {
+    async fn act_seasons(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let id = pstr(params, "id");
         let quick = params["quick"].as_bool().unwrap_or(false);
-        let list = self.content.seasons(&self.cookie(), &id, quick).await?;
+        let list = self.content.seasons(&cookie_of(&acct.user), &id, quick).await?;
         Ok(json!({ "items": list }))
     }
 
-    async fn act_comments(&self, params: &Value) -> Result<Value, String> {
+    async fn act_comments(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let id = pstr(params, "id");
         let vid = pstr(params, "vid");
         let offset = params["offset"].as_i64().unwrap_or(0) as i32;
-        self.content.comments(&self.cookie(), &id, &vid, offset).await
+        self.content.comments(&cookie_of(&acct.user), &id, &vid, offset).await
     }
 
     async fn act_play(&self, params: &Value) -> Result<Value, String> {
@@ -755,66 +913,66 @@ impl AppCore {
         }))
     }
 
-    async fn act_history_list(&self, params: &Value) -> Result<Value, String> {
+    async fn act_history_list(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let limit = params["limit"].as_u64().unwrap_or(100) as usize;
-        let items = if self.user.logged_in() {
-            match self.account.cloud_history(limit).await {
+        let items = if acct.user.logged_in() {
+            match acct.cloud_history(limit).await {
                 Ok(items) => items,
-                Err(_) => self.account.local_history(limit),
+                Err(_) => acct.local_history(limit),
             }
         } else {
-            self.account.local_history(limit)
+            acct.local_history(limit)
         };
         Ok(json!({ "items": items }))
     }
 
-    async fn act_history_delete(&self, params: &Value) -> Result<Value, String> {
+    async fn act_history_delete(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let series_id = pstr(params, "seriesId");
-        self.account.forget_local_history(&series_id);
-        if self.user.logged_in() {
-            self.account.delete_history(&series_id).await?;
+        acct.forget_local_history(&series_id);
+        if acct.user.logged_in() {
+            acct.delete_history(&series_id).await?;
         }
         Ok(json!({ "ok": true }))
     }
 
-    async fn act_favorites_list(&self) -> Result<Value, String> {
-        if !self.user.logged_in() {
+    async fn act_favorites_list(&self, acct: &Arc<Account>) -> Result<Value, String> {
+        if !acct.user.logged_in() {
             return Ok(json!({ "items": [] }));
         }
-        let items = self.account.favorites().await?;
+        let items = acct.favorites().await?;
         Ok(json!({ "items": items }))
     }
 
-    async fn act_favorite_set(&self, params: &Value) -> Result<Value, String> {
-        if !self.user.logged_in() {
+    async fn act_favorite_set(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
+        if !acct.user.logged_in() {
             return Err("请先登录后再收藏".into());
         }
         let series_id = pstr(params, "seriesId");
         let add = params["add"].as_bool().unwrap_or(true);
-        self.account.set_favorite(&series_id, add).await?;
+        acct.set_favorite(&series_id, add).await?;
         Ok(json!({ "ok": true }))
     }
 
-    async fn act_reservations_list(&self, params: &Value) -> Result<Value, String> {
-        if !self.user.logged_in() {
+    async fn act_reservations_list(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
+        if !acct.user.logged_in() {
             return Ok(json!({ "items": [] }));
         }
         let online = params["online"].as_bool().unwrap_or(false);
-        let items = self.account.reservations(online).await?;
+        let items = acct.reservations(online).await?;
         Ok(json!({ "items": items }))
     }
 
-    async fn act_reservation_set(&self, params: &Value) -> Result<Value, String> {
-        if !self.user.logged_in() {
+    async fn act_reservation_set(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
+        if !acct.user.logged_in() {
             return Err("请先登录后再预约".into());
         }
         let series_id = pstr(params, "seriesId");
         let add = params["add"].as_bool().unwrap_or(true);
-        self.account.set_reservation(&series_id, add).await?;
+        acct.set_reservation(&series_id, add).await?;
         Ok(json!({ "ok": true }))
     }
 
-    async fn act_progress_report(&self, params: &Value) -> Result<Value, String> {
+    async fn act_progress_report(&self, acct: &Arc<Account>, params: &Value) -> Result<Value, String> {
         let series_id = pstr(params, "seriesId");
         let vid = pstr(params, "vid");
         let index = params["index"].as_i64().unwrap_or(0) as i32;
@@ -825,8 +983,7 @@ impl AppCore {
         let title = pstr(params, "title");
         let cover = pstr(params, "cover");
         let episode_count = params["episodeCount"].as_i64().unwrap_or(0) as i32;
-        match self
-            .account
+        match acct
             .report_progress(&series_id, &vid, index, pos, &title, &cover, episode_count, true)
             .await
         {

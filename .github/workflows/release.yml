@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: '可选：指定 Release Tag（客户端 v3.0.3 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
+        description: '可选：指定 Release Tag（客户端 v3.0.4 或 Core core-v1.0.1），留空仅生成 Actions 全量产物'
         required: false
         default: ''
 
@@ -43,9 +43,9 @@ jobs:
             EFFECTIVE_TAG="${{ inputs.release_tag }}"
           fi
 
-          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.3")')"
-          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3003")')"
-          CORE_VER="$(python3 -c 'import re,pathlib; m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", pathlib.Path("core/Cargo.toml").read_text()); print(m.group(1) if m else "1.0.0")')"
+          VER="$(python3 -c 'import re,pathlib; m=re.search(r"version-name.*default=\"([^\"]+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3.0.4")')"
+          CODE="$(python3 -c 'import re,pathlib; m=re.search(r"LVGUO_VERSION_CODE\",\s*\"(\d+)\"", pathlib.Path("hosts/android-tv/build_apk.py").read_text()); print(m.group(1) if m else "3004")')"
+          CORE_VER="$(python3 -c 'import re,pathlib; m=re.search(r"(?m)^version\s*=\s*\"([^\"]+)\"", pathlib.Path("core/Cargo.toml").read_text()); print(m.group(1) if m else "1.0.1")')"
 
           KIND="all"
           if [[ "${EFFECTIVE_TAG}" == core-v* ]]; then
@@ -157,7 +157,7 @@ jobs:
             lvguo-pc [--listen 127.0.0.1:0] [--data-dir PATH] [--browser] [--headless]
 
           三、核心热更新说明
-            自 3.0.0 起采用 Core（1.0.0）与 UI 彻底解耦架构。后续仅通过设置内「Core 更新」单文件热替换即可升级协议与解密核心；
+            自 3.0.0 起采用 Core（1.0.1）与 UI 彻底解耦架构。后续仅通过设置内「Core 更新」单文件热替换即可升级协议与解密核心；
             如本地安装有 mpv，可解锁独立硬解播放与 GPU 着色器增强。
           EOF
             tar -czf "out/pc/LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.tar.gz" -C out/pc "LvguoPC-${VER}-linux-${{ matrix.deb_arch }}.deb" "使用说明.txt"
@@ -275,7 +275,7 @@ jobs:
             2. 安装向导会自动识别 64 位（x64）或 32 位（x86）系统并写入对应核心组件。
 
           二、功能提示
-            - 自 3.0.0 起采用 Core（1.0.0）与 UI 彻底解耦架构，后续协议修复只需在「设置 -> Core 更新」单文件热替换。
+            - 自 3.0.0 起采用 Core（1.0.1）与 UI 彻底解耦架构，后续协议修复只需在「设置 -> Core 更新」单文件热替换。
             - 若系统安装有 mpv，可在设置内切换外部播放器解锁独立硬解窗与着色器增强。
           "@ | Set-Content -Path "out/pc-dist/使用说明.txt" -Encoding UTF8
             Compress-Archive -Path "out/pc-dist/LvguoPC-Setup-$env:VER-win.exe", "out/pc-dist/使用说明.txt" -DestinationPath "out/pc-dist/LvguoPC-$env:VER-win.zip" -Force
@@ -604,7 +604,9 @@ jobs:
 
           ### 本次更新
 
-          - **选集弹窗**：点击画面、背景、切换选集范围或切换季时不再关闭选集面板；仅在点击具体某一集或关闭按钮时关闭，便于连续浏览与切集。
+          - **会话隔离与安全**：Web 端按浏览器 Cookie 独立会话，账号数据互不可见；会话与本地历史落盘加密（AES-256-CTR + HMAC-SHA256），会话令牌加密且防伪造防篡改。
+          - **设置持久化**：界面设置改存 cookie（换端口/重启不丢），PC 使用稳定端口。
+          - **体验修复**：返回首页立即刷新「继续观看」；详情页未登录不再显示他人进度。
 
           > 为避免浏览器拦截裸安装包，全部交付产物均已打包为 \`.zip\` 或 \`.tar.gz\` 压缩包，内部均附带 \`使用说明.txt\`，解压后按说明安装或运行即可。
 

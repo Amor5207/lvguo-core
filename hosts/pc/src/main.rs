@@ -113,6 +113,26 @@ fn default_pc_data_dir() -> PathBuf {
         .join("LvguoPC")
 }
 
+/// 界面设置存在 WebView/浏览器的 localStorage 里，而 localStorage 按 origin 隔离：
+/// 监听端口若每次随机，origin 就每次都变，用户设置会被当成新站点清空。这里用固定端口。
+const PREFERRED_PORT: u16 = 47821;
+
+fn preferred_bind(data_dir: &Path) -> String {
+    let port = std::fs::read_to_string(data_dir.join("pc.port"))
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .filter(|p| *p >= 1024)
+        .unwrap_or(PREFERRED_PORT);
+    format!("127.0.0.1:{port}")
+}
+
+fn port_of(url: &str) -> Option<u16> {
+    url.rsplit(':')
+        .next()
+        .map(|s| s.trim().trim_end_matches('/'))
+        .and_then(|s| s.parse::<u16>().ok())
+}
+
 /// 探测宿主同目录或系统 PATH 下可用的 `mpv` 可执行文件。
 fn find_mpv_binary() -> Option<PathBuf> {
     let names: &[&str] = if cfg!(target_os = "windows") {
@@ -537,7 +557,8 @@ fn run_native_window(
 }
 
 fn main() {
-    let mut bind = "127.0.0.1:0".to_string();
+    let mut bind = String::new();
+    let mut explicit_bind = false;
     let mut data_dir = default_pc_data_dir();
     let mut update_mode = std::env::var("LVGUO_UPDATE_MODE").ok();
     let mut custom_url = std::env::var("LVGUO_UPDATE_URL").ok();
@@ -550,6 +571,7 @@ fn main() {
             "--listen" => {
                 if let Some(v) = args.next() {
                     bind = v;
+                    explicit_bind = true;
                 }
             }
             "--data-dir" => {
@@ -567,6 +589,9 @@ fn main() {
             }
             _ => {}
         }
+    }
+    if bind.trim().is_empty() {
+        bind = preferred_bind(&data_dir);
     }
 
     let core = match LoadedCore::open_and_init(
@@ -610,11 +635,24 @@ fn main() {
     .to_string();
 
     let url = match core.start_http(&bind, &caps) {
-        Ok(u) => u,
-        Err(e) => {
-            log_pc_error(&data_dir, &format!("[lvguo-pc] 本地服务启动失败: {e}"));
-            std::process::exit(1);
+        Ok(u) => {
+            // 记住端口，保证下次 origin 一致，localStorage 里的设置不会丢失
+            if !explicit_bind {
+                if let Some(p) = port_of(&u) {
+                    let _ = std::fs::create_dir_all(&data_dir);
+                    let _ = std::fs::write(data_dir.join("pc.port"), p.to_string());
+                }
+            }
+            u
         }
+        Err(_) => match core.start_http("127.0.0.1:0", &caps) {
+            // 首选端口被占用：退回系统分配端口保证可用，但不覆盖已记住的端口
+            Ok(u) => u,
+            Err(e) => {
+                log_pc_error(&data_dir, &format!("[lvguo-pc] 本地服务启动失败: {e}"));
+                std::process::exit(1);
+            }
+        },
     };
 
     println!(

@@ -281,7 +281,11 @@
   function go(url, replace) {
     var clean = stripBase(url);
     var target = fullPath(clean);
-    if (clean === currentURL() && curRoute) return;
+    if (clean === currentURL() && curRoute) {
+      // 已经在目标页（如再次点“首页”）：强制刷新一次历史/继续观看，避免“点了没反应”
+      if (clean === '/' || clean === '/home') { loadHistory(true); window.scrollTo({ top: 0, behavior: 'smooth' }); }
+      return;
+    }
     navFresh = true;
     if (replace) history.replaceState(null, '', target);
     else { hops++; history.pushState(null, '', target); }
@@ -556,6 +560,8 @@
     window.addEventListener('lv:history', historyChanged); window.addEventListener('lv:progress', historyChanged);
     cleanups.push(function () { window.removeEventListener('lv:history', historyChanged); window.removeEventListener('lv:progress', historyChanged); });
     if (hist.length) updateContinue(hist);
+    // 每次进入首页都拉一次最新观看历史，保证从播放页/详情页返回后“继续观看”立即更新
+    loadHistory(true);
     if (cached && cached.length) paint(cached);
     if (cachedHero && cachedHero.length) paintHero(cachedHero);
     else boardItems(HERO_BOARD, 5).then(function (list) {
@@ -1850,7 +1856,7 @@
           (dlUrl ? '<a class="btn primary" href="' + esc(dlUrl) + '" target="_blank" rel="noopener">下载新版</a>' : '') + '</div>');
       } else {
         var appSub = !appUpdate ? ''
-          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.3'));
+          : (appUpdate.disabled ? '已关闭自动更新' : esc(appUpdate.currentVersion || '3.0.4'));
         appHtml = row('软件更新', appSub, '<button class="btn" data-appcheck>检查更新</button>');
       }
       if (!coreStatus) return channelHtml + appHtml + row('Core 更新', '', '');

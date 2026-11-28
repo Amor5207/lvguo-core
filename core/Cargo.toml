@@ -1,6 +1,6 @@
 [package]
 name = "lvguo-core"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 description = "绿果统一核心库：协议签名、流媒体解密、账号同步、多线程下载与单文件热更新"
 license = "GPL-3.0"

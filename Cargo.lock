@@ -1499,7 +1499,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "lvguo-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -1526,7 +1526,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-host-common"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "libloading",
  "serde_json",
@@ -1534,7 +1534,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-pc"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "dirs 5.0.1",
  "lvguo-host-common",
@@ -1546,7 +1546,7 @@ dependencies = [
 
 [[package]]
 name = "lvguo-web"
-version = "3.0.3"
+version = "3.0.4"
 dependencies = [
  "dirs 5.0.1",
  "lvguo-host-common",

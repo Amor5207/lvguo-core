@@ -1,6 +1,6 @@
 [package]
 name = "lvguo-pc"
-version = "3.0.3"
+version = "3.0.4"
 edition = "2021"
 description = "绿果 PC 桌面宿主：动态加载单文件 lvguo-core，复用统一 Web UI 与原生 GPU mpv 播放窗口"
 license = "GPL-3.0"

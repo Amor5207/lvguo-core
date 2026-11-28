@@ -9,13 +9,30 @@
 
   // ------------------------------------------------------------ 设置与主题
   var DEF = { theme: 'auto', quality: '1080p', autonext: true, danmaku: true, dmOpacity: 0.85, dmSpeed: 1, dmSize: 1, dmArea: 0.5, keepRate: false, rate: 1, volume: 1, muted: false, nativePlayer: false, gpuAccel: true, superRes: 'off', frameInterp: 'off', splitCompare: false, aspect: 'fit', mirror: false, rotate: 0, loopOne: false, skipIntro: 0, skipOutro: 0, vBright: 1, vContrast: 1, vSat: 1 };
+  // 设置存 cookie（名 lvguo_settings）：cookie 按主机名共享、不区分端口，
+  // 因此换端口/重启 PC 都不会把设置当成新站点清空；仅设置项，无隐私，无需加密。
+  function getCookie(name) {
+    var parts = ('; ' + document.cookie).split('; ' + name + '=');
+    if (parts.length === 2) { try { return decodeURIComponent(parts.pop().split(';').shift()); } catch (e) { return null; } }
+    return null;
+  }
+  function setCookie(name, val, days) {
+    try { document.cookie = name + '=' + encodeURIComponent(val) + '; path=/; max-age=' + ((days || 365) * 86400) + '; SameSite=Lax'; } catch (e) {}
+  }
   var store = {};
-  try { store = JSON.parse(localStorage.getItem('lvguo.settings') || '{}'); } catch (e) {}
+  try { store = JSON.parse(getCookie('lvguo_settings') || '{}'); } catch (e) {}
+  // 一次性迁移：旧版把设置存在 localStorage，升级后首次加载搬到 cookie，避免用户设置丢失。
+  if (!getCookie('lvguo_settings')) {
+    try {
+      var _old = localStorage.getItem('lvguo.settings');
+      if (_old) { store = JSON.parse(_old); setCookie('lvguo_settings', JSON.stringify(store), 365); }
+    } catch (e) {}
+  }
   // 旧版卡顿时会把「默认清晰度」悄悄改成 720p 并存下来，之后一直拿不到 1080p：清掉一次，回到默认（1080p）。之后只有用户自己选的才保存。
-  if (store.quality && !store.qv) { delete store.quality; store.qv = 2; try { localStorage.setItem('lvguo.settings', JSON.stringify(store)); } catch (e) {} }
+  if (store.quality && !store.qv) { delete store.quality; store.qv = 2; setCookie('lvguo_settings', JSON.stringify(store), 365); }
   LV.set = function (k, v) {
     store[k] = v; if (k === 'quality') store.qv = 2;
-    try { localStorage.setItem('lvguo.settings', JSON.stringify(store)); } catch (e) {}
+    setCookie('lvguo_settings', JSON.stringify(store), 365);
     if (k === 'theme') applyTheme();
   };
   LV.get = (k) => (store[k] === undefined ? DEF[k] : store[k]);
